@@ -1,0 +1,120 @@
+# Symphony Desktop Implementation Tracker
+
+Status legend: `Not started` | `In progress` | `Done` | `Blocked`
+
+Overall status: `In progress`
+
+Reference spec: [`docs/SPEC.md`](./docs/SPEC.md)
+
+## Foundation
+Status: `Done`
+
+- [x] Bootstrap Electron + Vite + React + TypeScript project structure
+- [x] Add Tailwind-ready renderer styling baseline and shadcn-style component primitives
+- [x] Add implementation tracking artifacts and machine-readable progress source
+- [x] Wire preload + IPC bootstrap between main and renderer
+
+Acceptance criteria:
+- Desktop app boots into an Electron shell in development.
+- Shared types are available to both runtime and renderer code.
+- Progress state is inspectable in-repo and from the dev UI.
+
+Verification: Bootstrapped via project scaffold and Electron/Vite wiring in this repository. Validation recorded with `npm run build` and `npm run test`.
+
+## Runtime Core
+Status: `Done`
+
+- [x] Implement `WorkflowLoader` with parse + reload support
+- [x] Implement adapter-aware `ConfigLayer`
+- [x] Implement `WorkspaceManager` safety checks and hooks
+- [x] Implement `ObservabilityStore` and snapshot publishing
+
+Acceptance criteria:
+- Runtime can load `WORKFLOW.md`, keep last-known-good config, and emit snapshot updates.
+- Workspaces are derived from issue identifiers and constrained to the configured root.
+
+Verification: Covered by unit tests, retry/reconciliation flow, and orchestrator bootstrap.
+
+## Linear Adapter
+Status: `Done`
+
+- [x] Define `TrackerAdapter` abstraction
+- [x] Add `TrackerRegistry`
+- [x] Implement `LinearTrackerAdapter` and normalized issue mapping
+- [x] Expose tracker metadata to the renderer
+
+Acceptance criteria:
+- Orchestrator depends on normalized issue data and adapter capabilities, not Linear-specific code paths.
+
+Verification: Covered by adapter/config tests and runtime integration wiring.
+
+## Codex Integration
+Status: `Done`
+
+- [x] Implement app-server process launch and JSON line transport
+- [x] Implement session bootstrap and turn lifecycle helpers
+- [x] Support dynamic tool registration for adapter-provided tools
+- [x] Track tokens, events, and rate-limit snapshots
+
+Acceptance criteria:
+- Runtime can launch Codex app-server compatible commands and stream live updates into observability state.
+
+Verification: Verified through protocol parser/unit coverage and integration wiring.
+
+## Observability UI
+Status: `Done`
+
+- [x] Build Vercel-style shell with left navigation and compact top bar
+- [x] Add overview metrics, running sessions, retry queue, and logs views
+- [x] Add integrations/settings view
+- [x] Add dev-only implementation progress panel
+
+Acceptance criteria:
+- Renderer consumes pushed runtime snapshots and presents a clean technical dashboard with no manual refresh required.
+
+Verification: Renderer tests and local build verification.
+
+## Extensibility
+Status: `Done`
+
+- [x] Keep tracker integrations behind a registry and adapter contract
+- [x] Model tracker-provided dynamic tools as capabilities
+- [x] Use generic integration language in shared contracts and UI
+
+Acceptance criteria:
+- New tracker integrations can be added without changing orchestrator core contracts.
+
+Verification: Registry and shared contract design in `src/shared` and `src/main/tracker`.
+
+## Packaging
+Status: `In progress`
+
+- [x] Add Electron builder configuration
+- [x] Add build-time Electron bundle smoke verification
+- [ ] Validate packaged app output on macOS
+- [ ] Validate production-only behavior for progress panel hiding
+
+Acceptance criteria:
+- Project can produce a packaged desktop artifact and hide dev-only tooling in production.
+
+Verification: Builder config added and `npm run test:bundle` now verifies the built Electron main/preload bundles do not contain the `require("process")` ESM fallback regression.
+Additional runtime verification: HTTP observability startup now tolerates `EADDRINUSE` by falling back to an ephemeral port instead of crashing app boot.
+
+## Testing
+Status: `In progress`
+
+- [x] Add unit tests for workflow/config/progress/orchestrator pieces
+- [x] Add renderer smoke test coverage
+- [x] Add broader end-to-end validation with mocked Codex + tracker server
+- [x] Add transport regression coverage for early app-server exit / closed stdin
+
+Acceptance criteria:
+- Critical runtime contracts have automated coverage.
+- Completion is not based on file count alone.
+
+Verification: `npm run test` exercises workflow/config/progress, renderer smoke coverage, orchestrator bootstrap against the local memory adapter, HTTP port conflict handling, and early app-server exit transport safety.
+
+## Risks / Open Questions
+
+- Packaging and full desktop runtime validation still need real macOS verification beyond static build output.
+- SSH worker execution is implemented as a command path, but not yet covered by dedicated integration tests.
