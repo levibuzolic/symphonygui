@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type {
+  CreateKanbanColumnInput,
   CreateKanbanTaskInput,
   KanbanBoard,
   KanbanBoardPayload,
@@ -10,6 +11,8 @@ import type {
   KanbanTask,
   MoveKanbanTaskInput,
   NormalizedIssue,
+  UpdateKanbanBoardInput,
+  UpdateKanbanColumnInput,
   UpdateKanbanTaskInput,
 } from '@shared/types'
 
@@ -133,6 +136,46 @@ export class LocalKanbanStore {
       columns,
       tasks,
     }
+  }
+
+  updateBoard(input: UpdateKanbanBoardInput) {
+    const now = isoNow()
+    this.db.prepare('UPDATE boards SET name = ?, updated_at = ? WHERE id = ?').run(input.name.trim() || 'My Tasks', now, input.boardId)
+    return this.getBoard(input.boardId)!
+  }
+
+  createColumn(input: CreateKanbanColumnInput) {
+    const positionRow = this.db.prepare('SELECT COALESCE(MAX(position), -1) as position FROM columns WHERE board_id = ?').get(input.boardId) as { position: number }
+    const columnId = `col-${randomUUID()}`
+    this.db.prepare(
+      'INSERT INTO columns (id, board_id, name, position, is_active, is_terminal) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      columnId,
+      input.boardId,
+      input.name.trim() || 'New Column',
+      positionRow.position + 1,
+      input.isActive ? 1 : 0,
+      input.isTerminal ? 1 : 0,
+    )
+    this.bumpBoard(input.boardId, isoNow())
+    return this.getBoard(input.boardId)!
+  }
+
+  updateColumn(input: UpdateKanbanColumnInput) {
+    const existing = this.db.prepare('SELECT board_id FROM columns WHERE id = ?').get(input.id) as { board_id: string } | undefined
+    if (!existing) throw new Error(`unknown_column:${input.id}`)
+    this.db.prepare(
+      `UPDATE columns
+       SET name = ?, is_active = COALESCE(?, is_active), is_terminal = COALESCE(?, is_terminal)
+       WHERE id = ?`,
+    ).run(
+      input.name.trim() || 'Unnamed Column',
+      typeof input.isActive === 'boolean' ? Number(input.isActive) : null,
+      typeof input.isTerminal === 'boolean' ? Number(input.isTerminal) : null,
+      input.id,
+    )
+    this.bumpBoard(existing.board_id, isoNow())
+    return this.getBoard(existing.board_id)!
   }
 
   createTask(input: CreateKanbanTaskInput) {

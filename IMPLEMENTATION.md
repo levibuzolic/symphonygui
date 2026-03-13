@@ -108,7 +108,7 @@ Status: `In progress`
 - [x] Add preload/IPC contracts for local kanban settings, board queries, and task CRUD
 - [x] Add first-run onboarding prompt and settings controls for enabling/disabling Local Kanban
 - [x] Add dedicated kanban Electron window and renderer route
-- [ ] Refine drag/drop ordering, board editing, and task metadata polish
+- [x] Refine drag/drop ordering, board editing, and task metadata polish
 - [ ] Validate second-window runtime behavior in smoke and packaged flows
 
 Acceptance criteria:

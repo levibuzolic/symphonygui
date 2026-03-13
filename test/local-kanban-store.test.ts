@@ -36,5 +36,21 @@ describe('local kanban store', () => {
     })
 
     expect(moved.tasks.find((task) => task.identifier === 'LOCAL-2')?.columnId).toBe(board!.columns[2]!.id)
+
+    const renamed = store.updateBoard({
+      boardId: board!.board.id,
+      name: 'Operations Board',
+    })
+
+    expect(renamed.board.name).toBe('Operations Board')
+
+    const withColumn = store.createColumn({
+      boardId: board!.board.id,
+      name: 'Review',
+      isActive: true,
+      isTerminal: false,
+    })
+
+    expect(withColumn.columns.some((column) => column.name === 'Review')).toBe(true)
   })
 })

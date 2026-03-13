@@ -15,7 +15,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Archive, GripVertical, Plus, Sparkles } from 'lucide-react'
+import { Archive, GripVertical, PencilLine, Plus, Settings2, Sparkles } from 'lucide-react'
 import type { SymphonyApi } from '@shared/ipc'
 import type { BootstrapPayload, KanbanBoardPayload, KanbanTask } from '@shared/types'
 import { cn } from '@shared/utils'
@@ -33,6 +33,13 @@ type TaskDraft = {
   labels: string
 }
 
+type ColumnDraft = {
+  id: string | null
+  name: string
+  isActive: boolean
+  isTerminal: boolean
+}
+
 export function KanbanWindow({
   bootstrap,
   onBootstrapRefresh,
@@ -43,6 +50,9 @@ export function KanbanWindow({
   const symphony = (globalThis as typeof globalThis & { symphony: SymphonyApi }).symphony
   const [board, setBoard] = useState<KanbanBoardPayload | null>(null)
   const [draft, setDraft] = useState<TaskDraft | null>(null)
+  const [boardNameDraft, setBoardNameDraft] = useState('')
+  const [columnDraft, setColumnDraft] = useState<ColumnDraft | null>(null)
+  const [showBoardSettings, setShowBoardSettings] = useState(false)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   useEffect(() => {
@@ -61,6 +71,37 @@ export function KanbanWindow({
   async function refreshBoard() {
     const next = await symphony.getKanbanBoard(board?.board.id ?? null)
     setBoard(next)
+  }
+
+  async function handleUpdateBoard() {
+    if (!board) return
+    const payload = await symphony.updateKanbanBoard({
+      boardId: board.board.id,
+      name: boardNameDraft.trim() || board.board.name,
+    })
+    setBoard(payload)
+    setShowBoardSettings(false)
+    onBootstrapRefresh(await symphony.getBootstrap())
+  }
+
+  async function handleCreateOrUpdateColumn() {
+    if (!board || !columnDraft || !columnDraft.name.trim()) return
+    const payload = columnDraft.id
+      ? await symphony.updateKanbanColumn({
+          id: columnDraft.id,
+          name: columnDraft.name.trim(),
+          isActive: columnDraft.isActive,
+          isTerminal: columnDraft.isTerminal,
+        })
+      : await symphony.createKanbanColumn({
+          boardId: board.board.id,
+          name: columnDraft.name.trim(),
+          isActive: columnDraft.isActive,
+          isTerminal: columnDraft.isTerminal,
+        })
+    setBoard(payload)
+    setColumnDraft(null)
+    onBootstrapRefresh(await symphony.getBootstrap())
   }
 
   async function handleCreateOrUpdateTask() {
@@ -132,6 +173,18 @@ export function KanbanWindow({
             <Button type="button" variant="outline" onClick={() => void refreshBoard()}>Refresh board</Button>
             <Button
               type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={() => {
+                setBoardNameDraft(board.board.name)
+                setShowBoardSettings(true)
+              }}
+            >
+              <Settings2 className="h-4 w-4" />
+              Board settings
+            </Button>
+            <Button
+              type="button"
               onClick={() => setDraft({ id: null, title: '', description: '', priority: '', columnId: board.columns[0]?.id ?? '', labels: '' })}
               className="gap-2 bg-amber-300 text-black hover:bg-amber-200"
             >
@@ -154,7 +207,24 @@ export function KanbanWindow({
                           <CardTitle className="text-lg">{column.name}</CardTitle>
                           <CardDescription>{column.isTerminal ? 'Terminal' : column.isActive ? 'Dispatchable' : 'Holding lane'}</CardDescription>
                         </div>
-                        <Badge className="border-amber-300/20 bg-amber-300/10 text-amber-100">{tasks.length}</Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge className="border-amber-300/20 bg-amber-300/10 text-amber-100">{tasks.length}</Badge>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => setColumnDraft({
+                              id: column.id,
+                              name: column.name,
+                              isActive: column.isActive,
+                              isTerminal: column.isTerminal,
+                            })}
+                            aria-label={`Edit ${column.name}`}
+                          >
+                            <PencilLine className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-5">
@@ -262,6 +332,125 @@ export function KanbanWindow({
           </div>
         </div>
       ) : null}
+
+      {showBoardSettings ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/65 px-6">
+          <div className="w-full max-w-xl rounded-[28px] border border-white/10 bg-zinc-950 p-7 shadow-[0_28px_120px_rgba(0,0,0,0.7)]">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-zinc-300">
+                  <Settings2 className="h-3.5 w-3.5" />
+                  Board settings
+                </div>
+                <h2 className="text-2xl font-semibold text-white">Edit board</h2>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setShowBoardSettings(false)}>Close</Button>
+            </div>
+
+            <div className="space-y-4">
+              <label className="block space-y-2">
+                <span className="text-sm text-zinc-400">Board name</span>
+                <Input value={boardNameDraft} onChange={(event: ChangeEvent<HTMLInputElement>) => setBoardNameDraft(String((event.target as { value?: unknown }).value ?? ''))} />
+              </label>
+              <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium text-white">Columns</div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setShowBoardSettings(false)
+                      setColumnDraft({ id: null, name: '', isActive: false, isTerminal: false })
+                    }}
+                  >
+                    Add column
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {board.columns.map((column) => (
+                    <button
+                      key={column.id}
+                      type="button"
+                      onClick={() => {
+                        setShowBoardSettings(false)
+                        setColumnDraft({
+                          id: column.id,
+                          name: column.name,
+                          isActive: column.isActive,
+                          isTerminal: column.isTerminal,
+                        })
+                      }}
+                      className="flex w-full items-center justify-between rounded-xl border border-white/8 bg-black/25 px-4 py-3 text-left hover:bg-white/[0.04]"
+                    >
+                      <div>
+                        <div className="text-sm text-white">{column.name}</div>
+                        <div className="text-xs text-zinc-500">{column.isTerminal ? 'Terminal' : column.isActive ? 'Dispatchable' : 'Holding lane'}</div>
+                      </div>
+                      <PencilLine className="h-4 w-4 text-zinc-500" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <Button type="button" onClick={() => void handleUpdateBoard()} className="bg-amber-300 text-black hover:bg-amber-200">Save board</Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {columnDraft ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/65 px-6">
+          <div className="w-full max-w-xl rounded-[28px] border border-white/10 bg-zinc-950 p-7 shadow-[0_28px_120px_rgba(0,0,0,0.7)]">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-zinc-300">
+                  <PencilLine className="h-3.5 w-3.5" />
+                  Column editor
+                </div>
+                <h2 className="text-2xl font-semibold text-white">{columnDraft.id ? 'Edit column' : 'Create column'}</h2>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setColumnDraft(null)}>Close</Button>
+            </div>
+
+            <div className="space-y-4">
+              <label className="block space-y-2">
+                <span className="text-sm text-zinc-400">Column name</span>
+                <Input value={columnDraft.name} onChange={(event: ChangeEvent<HTMLInputElement>) => setColumnDraft({ ...columnDraft, name: String((event.target as { value?: unknown }).value ?? '') })} />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <ToggleTile
+                  title="Dispatchable"
+                  description="Eligible for active work."
+                  active={columnDraft.isActive}
+                  onToggle={() => setColumnDraft({ ...columnDraft, isActive: !columnDraft.isActive })}
+                />
+                <ToggleTile
+                  title="Terminal"
+                  description="Marks work as complete."
+                  active={columnDraft.isTerminal}
+                  onToggle={() => setColumnDraft({ ...columnDraft, isTerminal: !columnDraft.isTerminal })}
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setColumnDraft({ id: null, name: '', isActive: false, isTerminal: false })}
+              >
+                New column
+              </Button>
+              <Button type="button" onClick={() => void handleCreateOrUpdateColumn()} className="bg-amber-300 text-black hover:bg-amber-200">
+                {columnDraft.id ? 'Save column' : 'Create column'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -318,4 +507,30 @@ function ColumnDropZone({ columnId, children }: { columnId: string; children: Re
 
 function parseLabels(value: string) {
   return value.split(',').map((label) => label.trim()).filter(Boolean)
+}
+
+function ToggleTile({
+  title,
+  description,
+  active,
+  onToggle,
+}: {
+  title: string
+  description: string
+  active: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        'rounded-2xl border px-4 py-4 text-left transition',
+        active ? 'border-amber-300/30 bg-amber-300/10 text-white' : 'border-white/8 bg-white/[0.03] text-zinc-300',
+      )}
+    >
+      <div className="text-sm font-medium">{title}</div>
+      <div className="mt-1 text-xs text-zinc-500">{description}</div>
+    </button>
+  )
 }
