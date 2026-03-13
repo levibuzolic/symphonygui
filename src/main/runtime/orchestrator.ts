@@ -171,9 +171,7 @@ export class Orchestrator {
               ? ["Todo", "In Progress", "Blocked"]
               : this.config.tracker.activeStates,
           terminalStates:
-            effectiveTrackerKind === "local"
-              ? ["Done"]
-              : this.config.tracker.terminalStates,
+            effectiveTrackerKind === "local" ? ["Done"] : this.config.tracker.terminalStates,
         },
       };
       const adapter = this.registry.get(this.config.tracker.kind);

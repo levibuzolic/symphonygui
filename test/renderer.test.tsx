@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../src/renderer/App";
-import type { BootstrapPayload } from "../src/shared/types";
+import type { BootstrapPayload, KanbanBoardPayload } from "../src/shared/types";
 
 const refreshRuntime = vi.fn();
 const getWorkflowDocument = vi.fn();
@@ -10,6 +10,54 @@ const saveWorkflowDocument = vi.fn();
 const openKanbanWindow = vi.fn();
 const enableLocalKanban = vi.fn();
 const disableLocalKanban = vi.fn();
+const getKanbanBoard = vi.fn();
+const emitBootstrap = vi.fn();
+const emitKanbanBoardChange = vi.fn();
+
+const defaultBoard: KanbanBoardPayload = {
+  board: {
+    id: "board-default",
+    name: "My Tasks",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  columns: [
+    {
+      id: "col-inbox",
+      boardId: "board-default",
+      name: "Inbox",
+      position: 0,
+      isActive: false,
+      isTerminal: false,
+    },
+    {
+      id: "col-todo",
+      boardId: "board-default",
+      name: "Todo",
+      position: 1,
+      isActive: true,
+      isTerminal: false,
+    },
+  ],
+  tasks: [
+    {
+      id: "task-1",
+      boardId: "board-default",
+      columnId: "col-inbox",
+      identifier: "LOCAL-1",
+      title: "Try moving this task",
+      description: "Sample task",
+      priority: 1,
+      branchName: null,
+      url: null,
+      position: 0,
+      labels: ["sample"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      archivedAt: null,
+    },
+  ],
+};
 
 function createBootstrap(overrides: Partial<BootstrapPayload> = {}): BootstrapPayload {
   return {
@@ -74,6 +122,9 @@ function installSymphonyStub(bootstrap = createBootstrap()) {
   openKanbanWindow.mockReset();
   enableLocalKanban.mockReset();
   disableLocalKanban.mockReset();
+  getKanbanBoard.mockReset();
+  emitBootstrap.mockReset();
+  emitKanbanBoardChange.mockReset();
   getWorkflowDocument.mockResolvedValue({
     path: "/tmp/WORKFLOW.md",
     contents: "---\ntracker:\n  kind: linear\n---\nPrompt body",
@@ -84,6 +135,7 @@ function installSymphonyStub(bootstrap = createBootstrap()) {
     contents,
     exists: true,
   }));
+  getKanbanBoard.mockResolvedValue(defaultBoard);
   (globalThis as typeof globalThis & { symphony: unknown }).symphony = {
     getBootstrap: vi.fn().mockResolvedValue(bootstrap),
     refreshRuntime,
@@ -98,7 +150,7 @@ function installSymphonyStub(bootstrap = createBootstrap()) {
     disableLocalKanban,
     openKanbanWindow,
     listKanbanBoards: vi.fn(),
-    getKanbanBoard: vi.fn(),
+    getKanbanBoard,
     createKanbanTask: vi.fn(),
     updateKanbanTask: vi.fn(),
     moveKanbanTask: vi.fn(),
@@ -106,6 +158,14 @@ function installSymphonyStub(bootstrap = createBootstrap()) {
     updateKanbanBoard: vi.fn(),
     createKanbanColumn: vi.fn(),
     updateKanbanColumn: vi.fn(),
+    onBootstrap: vi.fn().mockImplementation((listener) => {
+      emitBootstrap.mockImplementation(listener);
+      return () => undefined;
+    }),
+    onKanbanBoardChange: vi.fn().mockImplementation((listener) => {
+      emitKanbanBoardChange.mockImplementation(listener);
+      return () => undefined;
+    }),
     onSnapshot: vi.fn().mockReturnValue(() => undefined),
   };
 }
@@ -177,9 +237,7 @@ describe("renderer app", () => {
       target: { value: "memory" },
     });
 
-    expect(saveWorkflowDocument).toHaveBeenCalledWith(
-      expect.stringContaining("kind: memory"),
-    );
+    expect(saveWorkflowDocument).toHaveBeenCalledWith(expect.stringContaining("kind: memory"));
     expect(
       await screen.findByText("Set active integration to memory in WORKFLOW.md."),
     ).toBeInTheDocument();
@@ -236,7 +294,7 @@ describe("renderer app", () => {
     expect(await screen.findByText("Tracker integrations")).toBeInTheDocument();
   });
 
-  it("shows a kanban sidebar action when local kanban is enabled", async () => {
+  it("shows kanban as an integrated app view when local kanban is enabled", async () => {
     installSymphonyStub(
       createBootstrap({
         settings: {
@@ -249,14 +307,7 @@ describe("renderer app", () => {
             lastOpenedBoardId: "board-default",
           },
         },
-        kanbanBoards: [
-          {
-            id: "board-default",
-            name: "My Tasks",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-        ],
+        kanbanBoards: [defaultBoard.board],
         trackers: [
           {
             kind: "local",
@@ -281,7 +332,67 @@ describe("renderer app", () => {
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Kanban" }));
+    expect(await screen.findByText("My Tasks")).toBeInTheDocument();
+    expect(screen.getByText("Try moving this task")).toBeInTheDocument();
+  });
+
+  it("opens the detached board window from the integrated kanban view", async () => {
+    installSymphonyStub(
+      createBootstrap({
+        settings: {
+          onboardingCompleted: true,
+          activeTrackerKind: "local",
+          localKanban: {
+            enabled: true,
+            initialized: true,
+            databasePath: "/tmp/local-kanban.sqlite",
+            lastOpenedBoardId: "board-default",
+          },
+        },
+        kanbanBoards: [defaultBoard.board],
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Kanban" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open window" }));
     expect(openKanbanWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies kanban sync events from the main process", async () => {
+    installSymphonyStub(
+      createBootstrap({
+        settings: {
+          onboardingCompleted: true,
+          activeTrackerKind: "local",
+          localKanban: {
+            enabled: true,
+            initialized: true,
+            databasePath: "/tmp/local-kanban.sqlite",
+            lastOpenedBoardId: "board-default",
+          },
+        },
+        kanbanBoards: [defaultBoard.board],
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Kanban" }));
+    expect(await screen.findByText("Try moving this task")).toBeInTheDocument();
+
+    emitKanbanBoardChange({
+      ...defaultBoard,
+      tasks: [
+        {
+          ...defaultBoard.tasks[0],
+          id: "task-2",
+          identifier: "LOCAL-2",
+          title: "Synced from detached window",
+        },
+      ],
+    });
+
+    expect(await screen.findByText("Synced from detached window")).toBeInTheDocument();
   });
 
   it("enables local kanban from the integrations view", async () => {
@@ -336,9 +447,7 @@ describe("renderer app", () => {
     await screen.findByText("Symphony status");
     const html = String((container as unknown as { innerHTML?: string }).innerHTML ?? "");
     expect(html).toContain("h-screen overflow-hidden bg-background text-foreground");
-    expect(html).toContain(
-      "grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] overflow-hidden",
-    );
+    expect(html).toContain("grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] overflow-hidden");
   });
 
   it("marks the title chrome as draggable and header controls as no-drag", async () => {
@@ -346,9 +455,9 @@ describe("renderer app", () => {
     const { container } = render(<App />);
 
     const refreshButton = await screen.findByRole("button", { name: /refresh now/i });
-    const header = String((container as unknown as { innerHTML?: string }).innerHTML ?? "").includes(
-      "app-drag flex shrink-0 items-center justify-between",
-    );
+    const header = String(
+      (container as unknown as { innerHTML?: string }).innerHTML ?? "",
+    ).includes("app-drag flex shrink-0 items-center justify-between");
 
     expect(header).toBe(true);
     expect(String((refreshButton as unknown as { className?: string }).className ?? "")).toContain(

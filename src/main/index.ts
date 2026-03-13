@@ -380,7 +380,9 @@ app.whenReady().then(async () => {
     return document;
   });
   ipcMain.handle("settings:get", async () => settingsStore.get());
-  ipcMain.handle("settings:completeOnboarding", async () => settingsStore.markOnboardingCompleted());
+  ipcMain.handle("settings:completeOnboarding", async () =>
+    settingsStore.markOnboardingCompleted(),
+  );
   ipcMain.handle("kanban:enable", async () => enableLocalKanban());
   ipcMain.handle("kanban:disable", async () => disableLocalKanban());
   ipcMain.handle("kanban:openWindow", async () => {

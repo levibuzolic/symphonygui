@@ -149,16 +149,13 @@ export function App() {
 
   const isWorkflowDirty = workflowDocument !== null && workflowDraft !== workflowDocument.contents;
   const allIntegrations = mergeIntegrationDescriptors(bootstrap.trackers, bootstrap.settings);
-  const filtered = createFilteredState(
-    snapshot,
-    allIntegrations,
-    searchQuery,
-  );
+  const filtered = createFilteredState(snapshot, allIntegrations, searchQuery);
   const selectedRunning =
     filtered.running.find((entry) => entry.issue.identifier === selectedKey) ?? null;
   const selectedRetry = filtered.retrying.find((entry) => entry.identifier === selectedKey) ?? null;
   const selectedLog = filtered.logs.find((entry) => entry.id === selectedKey) ?? null;
-  const selectedIntegration = filtered.integrations.find((entry) => entry.kind === selectedKey) ?? null;
+  const selectedIntegration =
+    filtered.integrations.find((entry) => entry.kind === selectedKey) ?? null;
   const showOnboarding =
     !bootstrap.settings.onboardingCompleted &&
     !bootstrap.settings.localKanban.enabled &&
@@ -435,7 +432,7 @@ export function App() {
                       await symphony.disableLocalKanban();
                       await reloadBootstrap(symphony, setBootstrap, setSnapshot);
                     }}
-                    onOpenKanban={() => void symphony.openKanbanWindow()}
+                    onOpenKanban={() => setActiveView("kanban")}
                     isSavingWorkflow={isSavingWorkflow}
                   />
                 ) : null}
@@ -482,7 +479,7 @@ export function App() {
           onUseLocalKanban={async () => {
             await symphony.enableLocalKanban();
             await reloadBootstrap(symphony, setBootstrap, setSnapshot);
-            await symphony.openKanbanWindow();
+            setActiveView("kanban");
           }}
           onSetUpIntegration={() => setActiveView("integrations")}
           onSkip={async () => {
@@ -716,9 +713,7 @@ function IntegrationsView({
                         onChange={(event) =>
                           onLinearDraftChange({
                             ...linearDraft,
-                            endpoint: String(
-                              (event.target as { value?: unknown }).value ?? "",
-                            ),
+                            endpoint: String((event.target as { value?: unknown }).value ?? ""),
                           })
                         }
                         placeholder="https://api.linear.app/graphql"
@@ -733,9 +728,7 @@ function IntegrationsView({
                         onChange={(event) =>
                           onLinearDraftChange({
                             ...linearDraft,
-                            projectSlug: String(
-                              (event.target as { value?: unknown }).value ?? "",
-                            ),
+                            projectSlug: String((event.target as { value?: unknown }).value ?? ""),
                           })
                         }
                         placeholder="team-project"
@@ -934,10 +927,7 @@ function SettingsView({
                   Active integration
                 </div>
                 <div className="space-y-3">
-                  <label
-                    htmlFor="active-integration-select"
-                    className="text-sm text-zinc-400"
-                  >
+                  <label htmlFor="active-integration-select" className="text-sm text-zinc-400">
                     Choose which tracker adapter the workflow should use.
                   </label>
                   <select
@@ -1068,9 +1058,7 @@ function OnboardingModal({
               </p>
             </div>
             <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-              <div className="text-xs uppercase tracking-[0.24em] text-zinc-500">
-                Current state
-              </div>
+              <div className="text-xs uppercase tracking-[0.24em] text-zinc-500">Current state</div>
               <div className="mt-3 text-sm text-zinc-300">
                 Active tracker: {settings.activeTrackerKind ?? "None selected"}
               </div>
@@ -1483,7 +1471,10 @@ function parseWorkflowEditorDocument(contents: string) {
 
   return {
     config: (parsed ?? {}) as WorkflowFrontMatter,
-    body: lines.slice(endIndex + 1).join("\n").trim(),
+    body: lines
+      .slice(endIndex + 1)
+      .join("\n")
+      .trim(),
   };
 }
 
@@ -1593,6 +1584,8 @@ function viewTitle(activeView: ViewId) {
       return "Running sessions";
     case "logs":
       return "Runtime logs";
+    case "kanban":
+      return "Local Kanban";
     case "integrations":
       return "Tracker integrations";
     case "settings":

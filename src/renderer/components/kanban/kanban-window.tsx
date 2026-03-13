@@ -58,11 +58,7 @@ type KanbanWindowProps = {
   onOpenDetached?: () => void;
 };
 
-export function KanbanWindow({
-  bootstrap,
-  mode = "window",
-  onOpenDetached,
-}: KanbanWindowProps) {
+export function KanbanWindow({ bootstrap, mode = "window", onOpenDetached }: KanbanWindowProps) {
   const symphony = (globalThis as typeof globalThis & { symphony: SymphonyApi }).symphony;
   const [board, setBoard] = useState<KanbanBoardPayload | null>(null);
   const [draft, setDraft] = useState<TaskDraft | null>(null);
@@ -217,7 +213,9 @@ export function KanbanWindow({
 
   if (!bootstrap.settings.localKanban.enabled) {
     return (
-      <div className={cn("flex h-full min-h-0 items-center justify-center", isDetached && "h-screen")}>
+      <div
+        className={cn("flex h-full min-h-0 items-center justify-center", isDetached && "h-screen")}
+      >
         <Card className="w-full max-w-xl border-white/8 bg-black/35">
           <CardHeader>
             <CardTitle>Local Kanban is disabled</CardTitle>
@@ -232,11 +230,15 @@ export function KanbanWindow({
 
   if (!board) {
     return (
-      <div className={cn("flex h-full min-h-0 items-center justify-center", isDetached && "h-screen")}>
+      <div
+        className={cn("flex h-full min-h-0 items-center justify-center", isDetached && "h-screen")}
+      >
         <Card className="w-full max-w-xl border-white/8 bg-black/35">
           <CardHeader>
             <CardTitle>Loading Local Kanban</CardTitle>
-            <CardDescription>Fetching the latest board state from the local tracker.</CardDescription>
+            <CardDescription>
+              Fetching the latest board state from the local tracker.
+            </CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -275,14 +277,24 @@ export function KanbanWindow({
             and detached window stay in lockstep.
           </p>
         </div>
-        <div className={cn("flex shrink-0 flex-wrap items-center justify-end gap-2", isDetached && "app-no-drag")}>
+        <div
+          className={cn(
+            "flex shrink-0 flex-wrap items-center justify-end gap-2",
+            isDetached && "app-no-drag",
+          )}
+        >
           {!isDetached && onOpenDetached ? (
             <Button type="button" variant="outline" className="gap-2" onClick={onOpenDetached}>
               <ArrowUpRight className="h-4 w-4" />
               Open Window
             </Button>
           ) : null}
-          <Button type="button" variant="outline" className="gap-2" onClick={() => void refreshBoard()}>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            onClick={() => void refreshBoard()}
+          >
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
@@ -318,99 +330,106 @@ export function KanbanWindow({
         </div>
       </div>
 
-      <div className={cn("min-h-0 flex-1", isDetached ? "px-6 py-6" : "pt-6")}>
+      <div className="min-h-0 flex-1 overflow-hidden">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
           onDragEnd={(event) => void handleDragEnd(event)}
         >
-          <div className="flex h-full min-h-0 gap-4 overflow-x-auto overflow-y-hidden pb-2">
-            {board.columns.map((column) => {
-              const tasks = tasksByColumn.get(column.id) ?? [];
-              return (
-                <Card
-                  key={column.id}
-                  className="flex h-full min-h-0 w-[320px] min-w-[320px] flex-col border-white/8 bg-black/35"
-                >
-                  <CardHeader className="shrink-0 border-b border-white/5 pb-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <CardTitle className="truncate text-lg">{column.name}</CardTitle>
-                        <CardDescription>
-                          {column.isTerminal
-                            ? "Terminal lane"
-                            : column.isActive
-                              ? "Dispatchable work"
-                              : "Holding lane"}
-                        </CardDescription>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">{tasks.length}</Badge>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() =>
-                            setColumnDraft({
-                              id: column.id,
-                              name: column.name,
-                              isActive: column.isActive,
-                              isTerminal: column.isTerminal,
-                            })
-                          }
-                          aria-label={`Edit ${column.name}`}
-                        >
-                          <PencilLine className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-5">
-                    <SortableContext items={tasks.map((task) => task.id)} strategy={rectSortingStrategy}>
-                      <ColumnDropZone columnId={column.id}>
-                        {tasks.length === 0 ? (
+          <div className="h-full min-h-0 overflow-x-auto overflow-y-hidden">
+            <div
+              className={cn("flex min-h-full gap-4 pb-2", isDetached ? "px-6 py-6" : "px-6 pt-6")}
+            >
+              {board.columns.map((column) => {
+                const tasks = tasksByColumn.get(column.id) ?? [];
+                return (
+                  <Card
+                    key={column.id}
+                    className="flex h-full min-h-0 w-[320px] min-w-[320px] flex-col border-white/8 bg-black/35"
+                  >
+                    <CardHeader className="shrink-0 border-b border-white/5 pb-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <CardTitle className="truncate text-lg">{column.name}</CardTitle>
+                          <CardDescription>
+                            {column.isTerminal
+                              ? "Terminal lane"
+                              : column.isActive
+                                ? "Dispatchable work"
+                                : "Holding lane"}
+                          </CardDescription>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">{tasks.length}</Badge>
                           <Button
                             type="button"
                             variant="ghost"
-                            className="h-auto rounded-2xl border border-dashed border-white/10 px-4 py-8 text-left text-sm text-zinc-400 hover:border-white/20 hover:bg-white/[0.03]"
+                            size="icon"
+                            className="h-8 w-8"
                             onClick={() =>
-                              setDraft({
-                                id: null,
-                                title: "",
-                                description: "",
-                                priority: "",
-                                columnId: column.id,
-                                labels: "",
+                              setColumnDraft({
+                                id: column.id,
+                                name: column.name,
+                                isActive: column.isActive,
+                                isTerminal: column.isTerminal,
                               })
                             }
+                            aria-label={`Edit ${column.name}`}
                           >
-                            Drop a task here or create one in {column.name}.
+                            <PencilLine className="h-4 w-4" />
                           </Button>
-                        ) : (
-                          tasks.map((task) => (
-                            <TaskCard
-                              key={task.id}
-                              task={task}
-                              onEdit={() =>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-5">
+                      <SortableContext
+                        items={tasks.map((task) => task.id)}
+                        strategy={rectSortingStrategy}
+                      >
+                        <ColumnDropZone columnId={column.id}>
+                          {tasks.length === 0 ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="h-auto rounded-2xl border border-dashed border-white/10 px-4 py-8 text-left text-sm text-zinc-400 hover:border-white/20 hover:bg-white/[0.03]"
+                              onClick={() =>
                                 setDraft({
-                                  id: task.id,
-                                  title: task.title,
-                                  description: task.description ?? "",
-                                  priority: task.priority != null ? String(task.priority) : "",
-                                  columnId: task.columnId,
-                                  labels: task.labels.join(", "),
+                                  id: null,
+                                  title: "",
+                                  description: "",
+                                  priority: "",
+                                  columnId: column.id,
+                                  labels: "",
                                 })
                               }
-                            />
-                          ))
-                        )}
-                      </ColumnDropZone>
-                    </SortableContext>
-                  </CardContent>
-                </Card>
-              );
-            })}
+                            >
+                              Drop a task here or create one in {column.name}.
+                            </Button>
+                          ) : (
+                            tasks.map((task) => (
+                              <TaskCard
+                                key={task.id}
+                                task={task}
+                                onEdit={() =>
+                                  setDraft({
+                                    id: task.id,
+                                    title: task.title,
+                                    description: task.description ?? "",
+                                    priority: task.priority != null ? String(task.priority) : "",
+                                    columnId: task.columnId,
+                                    labels: task.labels.join(", "),
+                                  })
+                                }
+                              />
+                            ))
+                          )}
+                        </ColumnDropZone>
+                      </SortableContext>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           </div>
         </DndContext>
       </div>
@@ -425,7 +444,9 @@ export function KanbanWindow({
                     <Sparkles className="h-3.5 w-3.5" />
                     Task Editor
                   </div>
-                  <CardTitle className="text-2xl">{draft.id ? "Edit task" : "Create task"}</CardTitle>
+                  <CardTitle className="text-2xl">
+                    {draft.id ? "Edit task" : "Create task"}
+                  </CardTitle>
                   <CardDescription>
                     Task updates persist directly to the shared local board.
                   </CardDescription>
@@ -509,7 +530,9 @@ export function KanbanWindow({
               </label>
 
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm text-zinc-500">Changes replicate to every open kanban view.</div>
+                <div className="text-sm text-zinc-500">
+                  Changes replicate to every open kanban view.
+                </div>
                 <div className="flex items-center gap-2">
                   {draft.id ? (
                     <Button
@@ -759,7 +782,10 @@ function ColumnDropZone({ columnId, children }: { columnId: string; children: Re
   return (
     <div
       ref={setNodeRef}
-      className={cn("flex min-h-full flex-col gap-3 rounded-3xl transition", isOver && "bg-white/[0.03]")}
+      className={cn(
+        "flex min-h-full flex-col gap-3 rounded-3xl transition",
+        isOver && "bg-white/[0.03]",
+      )}
     >
       {children}
     </div>
@@ -790,7 +816,9 @@ function ToggleTile({
       <Card
         className={cn(
           "border px-4 py-4 transition",
-          active ? "border-white/18 bg-white/[0.08] text-white" : "border-white/8 bg-white/[0.03] text-zinc-300",
+          active
+            ? "border-white/18 bg-white/[0.08] text-white"
+            : "border-white/8 bg-white/[0.03] text-zinc-300",
         )}
       >
         <div className="text-sm font-medium">{title}</div>
