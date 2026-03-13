@@ -1,5 +1,11 @@
-import { EventEmitter } from 'node:events'
-import type { OrchestratorSnapshot, RetryEntry, RunningEntry, RuntimeLogEntry, TrackerDescriptor } from '@shared/types'
+import { EventEmitter } from "node:events";
+import type {
+  OrchestratorSnapshot,
+  RetryEntry,
+  RunningEntry,
+  RuntimeLogEntry,
+  TrackerDescriptor,
+} from "@shared/types";
 
 export class ObservabilityStore extends EventEmitter {
   private snapshot: OrchestratorSnapshot = {
@@ -14,12 +20,12 @@ export class ObservabilityStore extends EventEmitter {
     running: [],
     retrying: [],
     logs: [],
-    status: 'idle',
+    status: "idle",
     errors: [],
-  }
+  };
 
   getSnapshot() {
-    return this.snapshot
+    return this.snapshot;
   }
 
   update(partial: Partial<OrchestratorSnapshot>) {
@@ -27,33 +33,36 @@ export class ObservabilityStore extends EventEmitter {
       ...this.snapshot,
       ...partial,
       generatedAt: new Date().toISOString(),
-    }
+    };
     this.snapshot.counts = {
       running: this.snapshot.running.length,
       retrying: this.snapshot.retrying.length,
       claimed: this.snapshot.running.length + this.snapshot.retrying.length,
       completed: this.snapshot.counts.completed,
-    }
-    this.emit('snapshot', this.snapshot)
+    };
+    this.emit("snapshot", this.snapshot);
   }
 
   setRunning(running: RunningEntry[]) {
-    this.update({ running })
+    this.update({ running });
   }
 
   setRetrying(retrying: RetryEntry[]) {
-    this.update({ retrying })
+    this.update({ retrying });
   }
 
   appendLog(log: RuntimeLogEntry) {
-    this.update({ logs: [log, ...this.snapshot.logs].slice(0, 250) })
+    this.update({ logs: [log, ...this.snapshot.logs].slice(0, 250) });
   }
 
   setTracker(tracker: TrackerDescriptor | null) {
-    this.update({ tracker })
+    this.update({ tracker });
   }
 
   setErrors(errors: string[]) {
-    this.update({ errors, status: errors.length ? 'error' : this.snapshot.running.length ? 'running' : 'idle' })
+    this.update({
+      errors,
+      status: errors.length ? "error" : this.snapshot.running.length ? "running" : "idle",
+    });
   }
 }

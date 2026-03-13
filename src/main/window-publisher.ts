@@ -1,23 +1,27 @@
-import type { BrowserWindow } from 'electron'
+import type { BrowserWindow } from "electron";
 
-export function safeSendToWindow<T>(targetWindow: BrowserWindow | null, channel: string, payload: T) {
+export function safeSendToWindow<T>(
+  targetWindow: BrowserWindow | null,
+  channel: string,
+  payload: T,
+) {
   if (!targetWindow) {
-    return false
+    return false;
   }
 
   try {
     if (targetWindow.isDestroyed()) {
-      return false
+      return false;
     }
 
-    const contents = targetWindow.webContents
+    const contents = targetWindow.webContents;
     if (!contents || contents.isDestroyed() || contents.isCrashed()) {
-      return false
+      return false;
     }
 
-    contents.send(channel, payload)
-    return true
+    contents.send(channel, payload);
+    return true;
   } catch {
-    return false
+    return false;
   }
 }

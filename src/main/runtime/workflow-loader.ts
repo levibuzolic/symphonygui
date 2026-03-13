@@ -1,91 +1,91 @@
-import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import YAML from 'yaml'
-import type { WorkflowDefinition, WorkflowDocument } from '@shared/types'
+import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { dirname, resolve } from "node:path";
+import YAML from "yaml";
+import type { WorkflowDefinition, WorkflowDocument } from "@shared/types";
 
 export class WorkflowLoader extends EventEmitter {
-  private workflowPath: string
-  private currentDefinition: WorkflowDefinition | null = null
-  private lastGoodDefinition: WorkflowDefinition | null = null
-  private watcher: FSWatcher | null = null
+  private workflowPath: string;
+  private currentDefinition: WorkflowDefinition | null = null;
+  private lastGoodDefinition: WorkflowDefinition | null = null;
+  private watcher: FSWatcher | null = null;
 
-  constructor(workflowPath = resolve(process.cwd(), 'WORKFLOW.md')) {
-    super()
-    this.workflowPath = workflowPath
+  constructor(workflowPath = resolve(process.cwd(), "WORKFLOW.md")) {
+    super();
+    this.workflowPath = workflowPath;
   }
 
   getPath() {
-    return this.workflowPath
+    return this.workflowPath;
   }
 
   getCurrent() {
-    return this.currentDefinition ?? this.lastGoodDefinition
+    return this.currentDefinition ?? this.lastGoodDefinition;
   }
 
   getDocument(): WorkflowDocument {
     return {
       path: this.workflowPath,
-      contents: existsSync(this.workflowPath) ? readFileSync(this.workflowPath, 'utf8') : '',
+      contents: existsSync(this.workflowPath) ? readFileSync(this.workflowPath, "utf8") : "",
       exists: existsSync(this.workflowPath),
-    }
+    };
   }
 
   load(): WorkflowDefinition {
     if (!existsSync(this.workflowPath)) {
-      throw new Error(`missing_workflow_file:${this.workflowPath}`)
+      throw new Error(`missing_workflow_file:${this.workflowPath}`);
     }
 
-    const file = readFileSync(this.workflowPath, 'utf8')
-    const definition = parseWorkflowFile(file, this.workflowPath)
-    this.currentDefinition = definition
-    this.lastGoodDefinition = definition
-    return definition
+    const file = readFileSync(this.workflowPath, "utf8");
+    const definition = parseWorkflowFile(file, this.workflowPath);
+    this.currentDefinition = definition;
+    this.lastGoodDefinition = definition;
+    return definition;
   }
 
   save(contents: string) {
-    mkdirSync(dirname(this.workflowPath), { recursive: true })
-    writeFileSync(this.workflowPath, contents, 'utf8')
-    return this.getDocument()
+    mkdirSync(dirname(this.workflowPath), { recursive: true });
+    writeFileSync(this.workflowPath, contents, "utf8");
+    return this.getDocument();
   }
 
   startWatching() {
     if (!existsSync(this.workflowPath) || this.watcher) {
-      return
+      return;
     }
 
     this.watcher = watch(this.workflowPath, { persistent: false }, () => {
       try {
-        const definition = this.load()
-        this.emit('updated', definition)
+        const definition = this.load();
+        this.emit("updated", definition);
       } catch (error) {
-        this.emit('error', error)
+        this.emit("error", error);
       }
-    })
+    });
   }
 
   stopWatching() {
-    this.watcher?.close()
-    this.watcher = null
+    this.watcher?.close();
+    this.watcher = null;
   }
 }
 
 export function parseWorkflowFile(contents: string, sourcePath: string): WorkflowDefinition {
-  const trimmed = contents.trimStart()
-  let config: Record<string, unknown> = {}
-  let promptTemplate = contents
+  const trimmed = contents.trimStart();
+  let config: Record<string, unknown> = {};
+  let promptTemplate = contents;
 
-  if (trimmed.startsWith('---')) {
-    const lines = contents.split(/\r?\n/)
-    const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+  if (trimmed.startsWith("---")) {
+    const lines = contents.split(/\r?\n/);
+    const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
     if (endIndex > 0) {
-      const frontMatter = lines.slice(1, endIndex).join('\n')
-      const parsed = YAML.parse(frontMatter)
-      if (parsed && typeof parsed !== 'object') {
-        throw new Error('workflow_front_matter_not_a_map')
+      const frontMatter = lines.slice(1, endIndex).join("\n");
+      const parsed = YAML.parse(frontMatter);
+      if (parsed && typeof parsed !== "object") {
+        throw new Error("workflow_front_matter_not_a_map");
       }
-      config = (parsed ?? {}) as Record<string, unknown>
-      promptTemplate = lines.slice(endIndex + 1).join('\n')
+      config = (parsed ?? {}) as Record<string, unknown>;
+      promptTemplate = lines.slice(endIndex + 1).join("\n");
     }
   }
 
@@ -94,5 +94,5 @@ export function parseWorkflowFile(contents: string, sourcePath: string): Workflo
     promptTemplate: promptTemplate.trim(),
     sourcePath,
     loadedAt: new Date().toISOString(),
-  }
+  };
 }
