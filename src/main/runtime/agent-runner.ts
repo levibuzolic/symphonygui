@@ -30,8 +30,9 @@ export class AgentRunner extends EventEmitter {
       } satisfies CodexUpdateEvent)
     }
 
-    child.once('close', () => {
+    child.once('close', (code) => {
       transportClosed = true
+      emitTransportUpdate('transport_closed', `child process closed${code === null ? '' : ` (${code})`}`)
     })
     child.once('exit', () => {
       transportClosed = true

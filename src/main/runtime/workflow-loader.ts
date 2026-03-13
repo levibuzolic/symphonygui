@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events'
-import { existsSync, readFileSync, watch, type FSWatcher } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import YAML from 'yaml'
-import type { WorkflowDefinition } from '@shared/types'
+import type { WorkflowDefinition, WorkflowDocument } from '@shared/types'
 
 export class WorkflowLoader extends EventEmitter {
   private workflowPath: string
@@ -23,6 +23,14 @@ export class WorkflowLoader extends EventEmitter {
     return this.currentDefinition ?? this.lastGoodDefinition
   }
 
+  getDocument(): WorkflowDocument {
+    return {
+      path: this.workflowPath,
+      contents: existsSync(this.workflowPath) ? readFileSync(this.workflowPath, 'utf8') : '',
+      exists: existsSync(this.workflowPath),
+    }
+  }
+
   load(): WorkflowDefinition {
     if (!existsSync(this.workflowPath)) {
       throw new Error(`missing_workflow_file:${this.workflowPath}`)
@@ -33,6 +41,12 @@ export class WorkflowLoader extends EventEmitter {
     this.currentDefinition = definition
     this.lastGoodDefinition = definition
     return definition
+  }
+
+  save(contents: string) {
+    mkdirSync(dirname(this.workflowPath), { recursive: true })
+    writeFileSync(this.workflowPath, contents, 'utf8')
+    return this.getDocument()
   }
 
   startWatching() {

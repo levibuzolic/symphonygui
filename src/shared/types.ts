@@ -217,28 +217,14 @@ export interface OrchestratorSnapshot {
   errors: string[]
 }
 
-export interface ImplementationTask {
-  id: string
-  label: string
-  status: 'not_started' | 'in_progress' | 'done' | 'blocked'
-}
-
-export interface ImplementationMilestone {
-  id: string
-  label: string
-  status: 'not_started' | 'in_progress' | 'done' | 'blocked'
-  verification: string
-  tasks: ImplementationTask[]
-}
-
-export interface ImplementationProgress {
-  updatedAt: string
-  milestones: ImplementationMilestone[]
-}
-
 export interface BootstrapPayload {
   snapshot: OrchestratorSnapshot
-  progress: ImplementationProgress
   trackers: TrackerDescriptor[]
   isDevelopment: boolean
+}
+
+export interface WorkflowDocument {
+  path: string
+  contents: string
+  exists: boolean
 }

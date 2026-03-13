@@ -8,7 +8,8 @@ const api: SymphonyApi = {
   getIssue: (identifier) => ipcRenderer.invoke('runtime:getIssue', identifier),
   getLogs: () => ipcRenderer.invoke('runtime:getLogs'),
   listIntegrations: () => ipcRenderer.invoke('integrations:list'),
-  getProgress: () => ipcRenderer.invoke('progress:get'),
+  getWorkflowDocument: () => ipcRenderer.invoke('workflow:getDocument'),
+  saveWorkflowDocument: (contents) => ipcRenderer.invoke('workflow:saveDocument', contents),
   onSnapshot: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: OrchestratorSnapshot) => listener(snapshot)
     ipcRenderer.on('runtime:snapshot', wrapped)

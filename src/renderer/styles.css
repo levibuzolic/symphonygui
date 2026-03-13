@@ -63,6 +63,7 @@
     @apply bg-background text-foreground antialiased;
     margin: 0;
     min-height: 100vh;
+    user-select: none;
     background:
       radial-gradient(circle at top left, rgba(255, 255, 255, 0.05), transparent 22%),
       linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 20%),
@@ -74,8 +75,23 @@
   #root {
     min-height: 100vh;
   }
+
+  input,
+  textarea,
+  [contenteditable="true"],
+  [data-allow-select="true"] {
+    user-select: text;
+  }
 }
 
 @utility mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@utility app-drag {
+  -webkit-app-region: drag;
+}
+
+@utility app-no-drag {
+  -webkit-app-region: no-drag;
 }

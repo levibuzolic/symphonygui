@@ -3,13 +3,13 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { App } from '../src/renderer/App'
 import type { BootstrapPayload } from '../src/shared/types'
-import { implementationProgress } from '../src/shared/progress'
 
 const refreshRuntime = vi.fn()
+const getWorkflowDocument = vi.fn()
+const saveWorkflowDocument = vi.fn()
 
 const bootstrap: BootstrapPayload = {
   isDevelopment: true,
-  progress: implementationProgress,
   trackers: [
     {
       kind: 'linear',
@@ -52,13 +52,26 @@ const bootstrap: BootstrapPayload = {
 
 function installSymphonyStub() {
   refreshRuntime.mockReset()
+  getWorkflowDocument.mockReset()
+  saveWorkflowDocument.mockReset()
+  getWorkflowDocument.mockResolvedValue({
+    path: '/tmp/WORKFLOW.md',
+    contents: '---\ntracker:\n  kind: linear\n---\nPrompt body',
+    exists: true,
+  })
+  saveWorkflowDocument.mockImplementation(async (contents: string) => ({
+    path: '/tmp/WORKFLOW.md',
+    contents,
+    exists: true,
+  }))
   ;(globalThis as typeof globalThis & { symphony: unknown }).symphony = {
     getBootstrap: vi.fn().mockResolvedValue(bootstrap),
     refreshRuntime,
     getIssue: vi.fn(),
     getLogs: vi.fn(),
     listIntegrations: vi.fn(),
-    getProgress: vi.fn(),
+    getWorkflowDocument,
+    saveWorkflowDocument,
     onSnapshot: vi.fn().mockReturnValue(() => undefined),
   }
 }
@@ -68,7 +81,7 @@ describe('renderer app', () => {
     installSymphonyStub()
     render(<App />)
     expect(await screen.findByText('Symphony status')).toBeInTheDocument()
-    expect(screen.getByText('Implementation Progress')).toBeInTheDocument()
+    expect(screen.queryByText('Implementation Progress')).not.toBeInTheDocument()
   })
 
   it('switches views from the sidebar', async () => {
@@ -80,6 +93,21 @@ describe('renderer app', () => {
 
     expect(screen.getByText('Runtime logs')).toBeInTheDocument()
     expect(screen.getAllByText('Fetched candidate issues').length).toBeGreaterThan(0)
+  })
+
+  it('allows editing and saving the workflow from settings', async () => {
+    installSymphonyStub()
+    render(<App />)
+
+    await screen.findByText('Symphony status')
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+
+    const editor = await screen.findByRole('textbox', { name: 'Workflow document' })
+    fireEvent.change(editor, { target: { value: '---\ntracker:\n  kind: memory\n---\nNew prompt body' } })
+    fireEvent.click(screen.getByRole('button', { name: /save workflow/i }))
+
+    expect(saveWorkflowDocument).toHaveBeenCalledWith('---\ntracker:\n  kind: memory\n---\nNew prompt body')
+    expect(await screen.findByText('Saved to WORKFLOW.md and refreshed the runtime.')).toBeInTheDocument()
   })
 
   it('triggers a refresh from the header action', async () => {
@@ -96,5 +124,16 @@ describe('renderer app', () => {
 
     await screen.findByText('Symphony status')
     expect(String((container as unknown as { innerHTML?: string }).innerHTML ?? '')).toContain('h-screen overflow-hidden bg-background text-foreground')
+  })
+
+  it('marks the title chrome as draggable and header controls as no-drag', async () => {
+    installSymphonyStub()
+    const { container } = render(<App />)
+
+    const refreshButton = await screen.findByRole('button', { name: /refresh now/i })
+    const header = String((container as unknown as { innerHTML?: string }).innerHTML ?? '').includes('app-drag flex shrink-0 items-center justify-between')
+
+    expect(header).toBe(true)
+    expect(String((refreshButton as unknown as { className?: string }).className ?? '')).toContain('app-no-drag')
   })
 })

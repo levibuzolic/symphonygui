@@ -12,13 +12,13 @@ import {
   Search,
 } from 'lucide-react'
 import type { SymphonyApi } from '@shared/ipc'
-import type { BootstrapPayload, OrchestratorSnapshot, RetryEntry, RunningEntry, RuntimeLogEntry, TrackerDescriptor } from '@shared/types'
+import type { BootstrapPayload, OrchestratorSnapshot, RetryEntry, RunningEntry, RuntimeLogEntry, TrackerDescriptor, WorkflowDocument } from '@shared/types'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
 import { Badge } from './components/ui/badge'
 import { Input } from './components/ui/input'
+import { Textarea } from './components/ui/textarea'
 import { formatDurationMs, formatInt, formatRelativeTime } from './lib/format'
-import { ProgressPanel } from './components/dashboard/progress-panel'
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: Activity },
@@ -36,12 +36,21 @@ export function App() {
   const [activeView, setActiveView] = useState<ViewId>('overview')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [workflowDocument, setWorkflowDocument] = useState<WorkflowDocument | null>(null)
+  const [workflowDraft, setWorkflowDraft] = useState('')
+  const [workflowStatus, setWorkflowStatus] = useState<{ tone: 'idle' | 'success' | 'error'; message: string | null }>({
+    tone: 'idle',
+    message: null,
+  })
+  const [isSavingWorkflow, setIsSavingWorkflow] = useState(false)
   const symphony = (globalThis as typeof globalThis & { symphony: SymphonyApi }).symphony
 
   useEffect(() => {
-    void symphony.getBootstrap().then((payload: BootstrapPayload) => {
+    void Promise.all([symphony.getBootstrap(), symphony.getWorkflowDocument()]).then(([payload, document]) => {
       setBootstrap(payload)
       setSnapshot(payload.snapshot)
+      setWorkflowDocument(document)
+      setWorkflowDraft(document.contents)
     })
     return symphony.onSnapshot((next: OrchestratorSnapshot) => setSnapshot(next))
   }, [symphony])
@@ -57,32 +66,56 @@ export function App() {
     return <div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">Booting Symphony Desktop…</div>
   }
 
+  const isWorkflowDirty = workflowDocument !== null && workflowDraft !== workflowDocument.contents
   const filtered = createFilteredState(snapshot, bootstrap.trackers, searchQuery)
   const selectedRunning = filtered.running.find((entry) => entry.issue.identifier === selectedKey) ?? null
   const selectedRetry = filtered.retrying.find((entry) => entry.identifier === selectedKey) ?? null
   const selectedLog = filtered.logs.find((entry) => entry.id === selectedKey) ?? null
   const selectedIntegration = filtered.integrations.find((entry) => entry.kind === selectedKey) ?? null
 
+  const reloadWorkflowDocument = async () => {
+    const document = await symphony.getWorkflowDocument()
+    setWorkflowDocument(document)
+    setWorkflowDraft(document.contents)
+    setWorkflowStatus({ tone: 'idle', message: 'Reloaded from disk.' })
+  }
+
+  const saveWorkflowDocument = async () => {
+    setIsSavingWorkflow(true)
+    setWorkflowStatus({ tone: 'idle', message: null })
+
+    try {
+      const document = await symphony.saveWorkflowDocument(workflowDraft)
+      setWorkflowDocument(document)
+      setWorkflowDraft(document.contents)
+      setWorkflowStatus({ tone: 'success', message: 'Saved to WORKFLOW.md and refreshed the runtime.' })
+    } catch (error) {
+      setWorkflowStatus({ tone: 'error', message: `Save failed: ${String(error)}` })
+    } finally {
+      setIsSavingWorkflow(false)
+    }
+  }
+
   return (
     <div className="h-screen overflow-hidden bg-background text-foreground">
       <div className="grid h-full grid-cols-[248px_minmax(0,1fr)]">
         <aside className="flex h-full flex-col border-r border-white/5 bg-black/80 px-4 py-5">
-          <div className="mb-6 flex items-center justify-between gap-3">
+          <div className="app-drag mb-6 flex items-center justify-between gap-3 rounded-xl px-1 py-1">
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-white">Symphony Desktop</div>
               <div className="text-xs text-zinc-500">Technical operations console</div>
             </div>
-            <Badge className="shrink-0">v0.1</Badge>
+            <Badge className="app-no-drag shrink-0">v0.1</Badge>
           </div>
 
-          <div className="relative mb-4">
+          <div className="app-no-drag relative mb-4">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-                <Input
-                  value={searchQuery}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => setSearchQuery(String((event.target as { value?: unknown }).value ?? ''))}
-                  placeholder="Search issues, sessions, logs"
-                  className="pl-9"
-                />
+            <Input
+              value={searchQuery}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setSearchQuery(String((event.target as { value?: unknown }).value ?? ''))}
+              placeholder="Search issues, sessions, logs"
+              className="pl-9"
+            />
           </div>
 
           <nav className="space-y-1">
@@ -126,12 +159,12 @@ export function App() {
         </aside>
 
         <main className="flex h-full min-h-0 flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-white/5 px-8 py-6">
+          <header className="app-drag flex shrink-0 items-center justify-between gap-4 border-b border-white/5 px-8 py-6">
             <div className="min-w-0">
               <div className="text-xs uppercase tracking-[0.24em] text-zinc-500">{activeView}</div>
               <h1 className="mt-2 truncate text-3xl font-semibold tracking-tight text-white">{viewTitle(activeView)}</h1>
             </div>
-            <div className="flex min-w-0 items-center gap-3">
+            <div className="app-no-drag flex min-w-0 items-center gap-3">
               <div className="hidden min-w-[360px] flex-1 md:block">
                 <Input value={snapshot.workflowPath ?? ''} readOnly className="truncate text-zinc-400" />
               </div>
@@ -139,6 +172,7 @@ export function App() {
                 type="button"
                 variant="outline"
                 size="icon"
+                className="app-no-drag"
                 onClick={() => {
                   const clipboard = (globalThis.navigator as Navigator & { clipboard?: { writeText(text: string): Promise<void> } } | undefined)?.clipboard
                   if (snapshot.workflowPath && clipboard) {
@@ -149,7 +183,7 @@ export function App() {
               >
                 <Copy className="h-4 w-4" />
               </Button>
-              <Button type="button" onClick={() => void symphony.refreshRuntime()} className="gap-2">
+              <Button type="button" onClick={() => void symphony.refreshRuntime()} className="app-no-drag gap-2">
                 <RefreshCw className="h-4 w-4" />
                 Refresh now
               </Button>
@@ -168,7 +202,20 @@ export function App() {
               {activeView === 'integrations' ? (
                 <IntegrationsView integrations={filtered.integrations} onSelect={setSelectedKey} selectedKey={selectedKey} />
               ) : null}
-              {activeView === 'settings' ? <SettingsView snapshot={snapshot} bootstrap={bootstrap} /> : null}
+              {activeView === 'settings' ? (
+                <SettingsView
+                  snapshot={snapshot}
+                  bootstrap={bootstrap}
+                  workflowDocument={workflowDocument}
+                  workflowDraft={workflowDraft}
+                  isWorkflowDirty={isWorkflowDirty}
+                  isSavingWorkflow={isSavingWorkflow}
+                  workflowStatus={workflowStatus}
+                  onWorkflowDraftChange={setWorkflowDraft}
+                  onWorkflowReload={() => void reloadWorkflowDocument()}
+                  onWorkflowSave={() => void saveWorkflowDocument()}
+                />
+              ) : null}
             </section>
 
             <aside className="min-h-0 overflow-auto pl-1">
@@ -179,8 +226,6 @@ export function App() {
                 selectedLog={selectedLog}
                 selectedIntegration={selectedIntegration}
                 snapshot={snapshot}
-                progress={bootstrap.progress}
-                showProgress={bootstrap.isDevelopment}
               />
             </aside>
           </div>
@@ -332,30 +377,99 @@ function IntegrationsView({
   )
 }
 
-function SettingsView({ snapshot, bootstrap }: { snapshot: OrchestratorSnapshot; bootstrap: BootstrapPayload }) {
+function SettingsView({
+  snapshot,
+  bootstrap,
+  workflowDocument,
+  workflowDraft,
+  isWorkflowDirty,
+  isSavingWorkflow,
+  workflowStatus,
+  onWorkflowDraftChange,
+  onWorkflowReload,
+  onWorkflowSave,
+}: {
+  snapshot: OrchestratorSnapshot
+  bootstrap: BootstrapPayload
+  workflowDocument: WorkflowDocument | null
+  workflowDraft: string
+  isWorkflowDirty: boolean
+  isSavingWorkflow: boolean
+  workflowStatus: { tone: 'idle' | 'success' | 'error'; message: string | null }
+  onWorkflowDraftChange: (next: string) => void
+  onWorkflowReload: () => void
+  onWorkflowSave: () => void
+}) {
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Runtime settings</CardTitle>
-          <CardDescription>Current workflow attachment and desktop runtime state.</CardDescription>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle>Workflow editor</CardTitle>
+              <CardDescription>Edit the live `WORKFLOW.md` without leaving the desktop app.</CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={isWorkflowDirty ? 'secondary' : 'outline'}>{isWorkflowDirty ? 'Unsaved changes' : 'In sync'}</Badge>
+              <Badge>{snapshot.status}</Badge>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Detail label="Workflow path" value={snapshot.workflowPath ?? 'Unavailable'} mono />
-          <Detail label="Poll interval" value={formatDurationMs(snapshot.pollIntervalMs)} />
-          <Detail label="Runtime status" value={snapshot.status} />
-          <Detail label="Development mode" value={bootstrap.isDevelopment ? 'Enabled' : 'Disabled'} />
-        </CardContent>
-      </Card>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">Workflow source</div>
+                  <div className="mono text-[11px] text-zinc-500">{workflowDocument?.exists ? 'existing file' : 'new file'}</div>
+                </div>
+                <div className="mono truncate text-xs text-zinc-300">{workflowDocument?.path ?? snapshot.workflowPath ?? 'Unavailable'}</div>
+              </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Operator notes</CardTitle>
-          <CardDescription>Current implementation assumptions surfaced in-app.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm text-muted-foreground">
-          <p>The desktop shell keeps the application pinned to a fixed viewport with internal pane scrolling only.</p>
-          <p>Future tracker integrations should be added through the adapter registry instead of branching renderer state by provider.</p>
+              <Textarea
+                aria-label="Workflow document"
+                data-allow-select="true"
+                value={workflowDraft}
+                onChange={(event: ChangeEvent<HTMLTextAreaElement>) => onWorkflowDraftChange(String((event.currentTarget as { value?: unknown }).value ?? ''))}
+                spellCheck={false}
+                className="mono min-h-[520px] resize-none border-white/8 bg-black/40 text-xs leading-6 text-zinc-100"
+              />
+
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                <div className={`text-sm ${workflowStatus.tone === 'error' ? 'text-red-300' : workflowStatus.tone === 'success' ? 'text-emerald-300' : 'text-zinc-400'}`}>
+                  {workflowStatus.message ?? 'Changes are written directly to the workflow file and picked up by the runtime.'}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="ghost" onClick={onWorkflowReload} disabled={isSavingWorkflow}>
+                    Revert
+                  </Button>
+                  <Button type="button" onClick={onWorkflowSave} disabled={!isWorkflowDirty || isSavingWorkflow}>
+                    {isSavingWorkflow ? 'Saving…' : 'Save workflow'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-500">Runtime attachment</div>
+                <div className="space-y-4">
+                  <Detail label="Poll interval" value={formatDurationMs(snapshot.pollIntervalMs)} />
+                  <Detail label="Runtime status" value={snapshot.status} />
+                  <Detail label="Development mode" value={bootstrap.isDevelopment ? 'Enabled' : 'Disabled'} />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-500">Editing notes</div>
+                <div className="space-y-3 text-sm text-muted-foreground">
+                  <p>Front matter controls tracker, polling, workspace, hooks, agent, and Codex runtime configuration.</p>
+                  <p>The body below the YAML block is the prompt template rendered per issue.</p>
+                  <p>Save writes to disk immediately. If the workflow becomes invalid, runtime errors will surface in the logs and status panels.</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -473,8 +587,6 @@ function InspectorPanel({
   selectedLog,
   selectedIntegration,
   snapshot,
-  progress,
-  showProgress,
 }: {
   activeView: ViewId
   selectedRunning: RunningEntry | null
@@ -482,8 +594,6 @@ function InspectorPanel({
   selectedLog: RuntimeLogEntry | null
   selectedIntegration: TrackerDescriptor | null
   snapshot: OrchestratorSnapshot
-  progress: BootstrapPayload['progress']
-  showProgress: boolean
 }) {
   return (
     <div className="space-y-4">
@@ -597,8 +707,6 @@ function InspectorPanel({
           </CardContent>
         </Card>
       ) : null}
-
-      {showProgress ? <ProgressPanel progress={progress} /> : null}
     </div>
   )
 }

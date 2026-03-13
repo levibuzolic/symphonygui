@@ -1,4 +1,4 @@
-import type { BootstrapPayload, NormalizedIssue, OrchestratorSnapshot, RuntimeLogEntry, TrackerDescriptor, ImplementationProgress } from './types'
+import type { BootstrapPayload, NormalizedIssue, OrchestratorSnapshot, RuntimeLogEntry, TrackerDescriptor, WorkflowDocument } from './types'
 
 export interface SymphonyApi {
   getBootstrap(): Promise<BootstrapPayload>
@@ -6,7 +6,8 @@ export interface SymphonyApi {
   getIssue(identifier: string): Promise<NormalizedIssue | null>
   getLogs(): Promise<RuntimeLogEntry[]>
   listIntegrations(): Promise<TrackerDescriptor[]>
-  getProgress(): Promise<ImplementationProgress>
+  getWorkflowDocument(): Promise<WorkflowDocument>
+  saveWorkflowDocument(contents: string): Promise<WorkflowDocument>
   onSnapshot(listener: (snapshot: OrchestratorSnapshot) => void): () => void
 }
 

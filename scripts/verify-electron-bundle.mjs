@@ -6,9 +6,11 @@ const mainBundlePath = resolve(process.cwd(), 'dist-electron/index.cjs')
 const preloadBundlePath = resolve(process.cwd(), 'dist-electron/preload.cjs')
 const staleMainBundlePath = resolve(process.cwd(), 'dist-electron/index.js')
 const stalePreloadBundlePath = resolve(process.cwd(), 'dist-electron/preload.mjs')
+const packageJsonPath = resolve(process.cwd(), 'package.json')
 
 const mainBundle = readFileSync(mainBundlePath, 'utf8')
 const preloadBundle = readFileSync(preloadBundlePath, 'utf8')
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
 
 const forbiddenFallback = 'Calling `require` for "process"'
 
@@ -18,6 +20,10 @@ if (mainBundle.includes(forbiddenFallback) || preloadBundle.includes(forbiddenFa
 
 if (!mainBundle.includes('exports') && !mainBundle.includes('module.exports')) {
   throw new Error('Electron main bundle was not emitted as CommonJS.')
+}
+
+if (packageJson.type === 'module') {
+  throw new Error('Root package.json cannot use "type": "module" while Electron main is emitted as CommonJS.')
 }
 
 for (const staleArtifactPath of [staleMainBundlePath, stalePreloadBundlePath]) {

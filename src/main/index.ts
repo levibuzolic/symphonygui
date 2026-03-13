@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'node:path'
-import { implementationProgress } from '@shared/progress'
 import type { BootstrapPayload } from '@shared/types'
 import { WorkflowLoader } from './runtime/workflow-loader'
 import { ObservabilityStore } from './runtime/observability-store'
@@ -10,6 +9,7 @@ import { LinearTrackerAdapter } from './tracker/linear-adapter'
 import { MemoryTrackerAdapter } from './tracker/memory-adapter'
 import { Orchestrator } from './runtime/orchestrator'
 import { ObservabilityHttpServer } from './http/observability-http-server'
+import { safeSendToWindow } from './window-publisher'
 
 const workflowLoader = new WorkflowLoader()
 const store = new ObservabilityStore()
@@ -25,7 +25,30 @@ let mainWindow: BrowserWindow | null = null
 let unsubscribeSnapshotListener: (() => void) | null = null
 let isQuitting = false
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+}
+
+function focusWindow(targetWindow: BrowserWindow | null) {
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return
+  }
+
+  if (targetWindow.isMinimized()) {
+    targetWindow.restore()
+  }
+
+  targetWindow.focus()
+}
+
 function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    focusWindow(mainWindow)
+    return mainWindow
+  }
+
   mainWindow = new BrowserWindow({
     width: 1560,
     height: 980,
@@ -55,9 +78,19 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  return mainWindow
 }
 
+app.on('second-instance', () => {
+  focusWindow(mainWindow)
+})
+
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) {
+    return
+  }
+
   await orchestrator.start()
   const snapshot = store.getSnapshot()
   if (snapshot.workflowPath && !snapshot.errors.length) {
@@ -77,21 +110,7 @@ app.whenReady().then(async () => {
     if (isQuitting) {
       return
     }
-    const targetWindow = mainWindow
-    if (!targetWindow || targetWindow.isDestroyed()) {
-      return
-    }
-
-    const contents = targetWindow.webContents
-    if (contents.isDestroyed() || contents.isCrashed()) {
-      return
-    }
-
-    try {
-      contents.send('runtime:snapshot', snapshotUpdate)
-    } catch {
-      // Ignore late sends during shutdown / HMR teardown.
-    }
+    safeSendToWindow(mainWindow, 'runtime:snapshot', snapshotUpdate)
   }
 
   const snapshotListener = (snapshotUpdate: BootstrapPayload['snapshot']) => {
@@ -105,7 +124,6 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:getBootstrap', async (): Promise<BootstrapPayload> => ({
     snapshot: store.getSnapshot(),
-    progress: implementationProgress,
     trackers: registry.list(),
     isDevelopment: !app.isPackaged,
   }))
@@ -117,7 +135,28 @@ app.whenReady().then(async () => {
   ipcMain.handle('runtime:getIssue', async (_event, identifier: string) => orchestrator.getIssueDetails(identifier))
   ipcMain.handle('runtime:getLogs', async () => store.getSnapshot().logs)
   ipcMain.handle('integrations:list', async () => registry.list())
-  ipcMain.handle('progress:get', async () => implementationProgress)
+  ipcMain.handle('workflow:getDocument', async () => workflowLoader.getDocument())
+  ipcMain.handle('workflow:saveDocument', async (_event, contents: string) => {
+    const document = workflowLoader.save(contents)
+    try {
+      await orchestrator.refreshNow()
+    } catch (error) {
+      logger.warn('workflow', 'Workflow refresh after save failed', { error: String(error) })
+      store.appendLog(logger.warn('workflow', 'Workflow refresh after save failed', { error: String(error) }))
+    }
+    return document
+  })
+})
+
+app.on('activate', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    focusWindow(mainWindow)
+    return
+  }
+
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow()
+  }
 })
 
 app.on('window-all-closed', () => {

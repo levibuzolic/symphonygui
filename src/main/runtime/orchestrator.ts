@@ -16,14 +16,21 @@ export class Orchestrator {
   private workflowDefinition: ReturnType<WorkflowLoader['getCurrent']> = null
   private config: ServiceConfig | null = null
   private timer: NodeJS.Timeout | null = null
+  private stopping = false
   private running = new Map<string, RunningEntry>()
   private retrying = new Map<string, { issue: NormalizedIssue; dueAtMs: number; attempt: number; error: string | null }>()
 
   private workflowUpdatedHandler = () => {
+    if (this.stopping) {
+      return
+    }
     void this.reload()
   }
 
   private workflowErrorHandler = (error: unknown) => {
+    if (this.stopping) {
+      return
+    }
     this.logger.error('workflow', 'Workflow reload failed', { error: String(error) })
     this.store.setErrors([String(error)])
   }
@@ -36,6 +43,9 @@ export class Orchestrator {
   ) {
     this.workflowDefinition = this.workflowLoader.getCurrent() ?? null
     this.agentRunner.on('update', (event) => {
+      if (this.stopping) {
+        return
+      }
       this.logger.info('codex', event.event, { message: event.message })
       this.store.appendLog(this.logger.info('codex', event.event, { message: event.message }))
       for (const [issueId, entry] of this.running.entries()) {
@@ -58,6 +68,7 @@ export class Orchestrator {
   }
 
   async start() {
+    this.stopping = false
     this.workflowLoader.startWatching()
     this.workflowLoader.on('updated', this.workflowUpdatedHandler)
     this.workflowLoader.on('error', this.workflowErrorHandler)
@@ -66,6 +77,7 @@ export class Orchestrator {
   }
 
   stop() {
+    this.stopping = true
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
@@ -111,8 +123,14 @@ export class Orchestrator {
   }
 
   private async reload() {
+    if (this.stopping) {
+      return
+    }
     try {
       this.workflowDefinition = this.workflowLoader.load()
+      if (this.stopping) {
+        return
+      }
       this.config = this.configLayer.parse(this.workflowDefinition)
       const adapter = this.registry.get(this.config.tracker.kind)
       this.store.setTracker(adapter?.descriptor(this.config) ?? null)
@@ -121,6 +139,9 @@ export class Orchestrator {
         pollIntervalMs: this.config.polling.intervalMs,
       })
       await this.cleanupTerminalWorkspaces()
+      if (this.stopping) {
+        return
+      }
       this.store.setErrors([])
       this.logger.info('workflow', 'Workflow loaded', { path: this.workflowDefinition.sourcePath })
       this.store.appendLog(this.logger.info('workflow', 'Workflow loaded', { path: this.workflowDefinition.sourcePath }))
@@ -133,13 +154,23 @@ export class Orchestrator {
   }
 
   private schedule(delay = 1000) {
+    if (this.stopping) {
+      return
+    }
     this.timer = setTimeout(() => {
-      void this.tick().finally(() => this.schedule(this.config?.polling.intervalMs ?? 30000))
+      if (this.stopping) {
+        return
+      }
+      void this.tick().finally(() => {
+        if (!this.stopping) {
+          this.schedule(this.config?.polling.intervalMs ?? 30000)
+        }
+      })
     }, delay)
   }
 
   private async tick() {
-    if (!this.config || !this.workflowDefinition) return
+    if (this.stopping || !this.config || !this.workflowDefinition) return
     const adapter = this.registry.get(this.config.tracker.kind)
     if (!adapter) {
       this.store.setErrors([`unsupported_tracker:${this.config.tracker.kind}`])
@@ -148,8 +179,11 @@ export class Orchestrator {
 
     try {
       await this.runRetryQueue(adapter)
+      if (this.stopping) return
       await this.reconcileRunningIssues(adapter)
+      if (this.stopping) return
       const issues = await adapter.fetchCandidateIssues(this.config)
+      if (this.stopping) return
       this.logger.info('orchestrator', 'Fetched candidate issues', { count: issues.length })
       this.store.appendLog(this.logger.info('orchestrator', 'Fetched candidate issues', { count: issues.length }))
       const eligible = issues
@@ -162,6 +196,7 @@ export class Orchestrator {
 
       this.syncStore()
     } catch (error) {
+      if (this.stopping) return
       const message = String(error)
       this.logger.error('orchestrator', 'Tick failed', { error: message })
       this.store.appendLog(this.logger.error('orchestrator', 'Tick failed', { error: message }))
@@ -170,7 +205,7 @@ export class Orchestrator {
   }
 
   private async dispatchIssue(issue: NormalizedIssue, adapter: NonNullable<ReturnType<TrackerRegistry['get']>>) {
-    if (!this.config || !this.workflowDefinition) return
+    if (this.stopping || !this.config || !this.workflowDefinition) return
     const workspaceManager = new WorkspaceManager(this.config.workspace.root, this.config.hooks)
     const workspace = workspaceManager.ensureWorkspace(issue.identifier)
     const engine = new Liquid({ strictFilters: true, strictVariables: true })
@@ -208,9 +243,11 @@ export class Orchestrator {
 
     try {
       await workspaceManager.runHook(this.config.hooks.beforeRun, workspace.path)
+      if (this.stopping) return
       entry.status = 'running'
       this.syncStore()
       const result = await this.agentRunner.runIssue(issue, this.config, workspace.path, prompt, adapter)
+      if (this.stopping) return
       entry.status = result.code === 0 ? 'completed' : 'failed'
       this.running.delete(issue.id)
       await workspaceManager.runHook(this.config.hooks.afterRun, workspace.path)
@@ -229,6 +266,7 @@ export class Orchestrator {
       }
       this.syncStore()
     } catch (error) {
+      if (this.stopping) return
       this.running.delete(issue.id)
       this.scheduleRetry(issue, 1, String(error))
       this.logger.error('orchestrator', 'Issue dispatch failed', { issue: issue.identifier, error: String(error) })
@@ -238,6 +276,9 @@ export class Orchestrator {
   }
 
   private syncStore() {
+    if (this.stopping) {
+      return
+    }
     this.store.setRunning([...this.running.values()])
     this.store.setRetrying(
       [...this.retrying.values()]
@@ -268,8 +309,9 @@ export class Orchestrator {
   }
 
   private async reconcileRunningIssues(adapter: NonNullable<ReturnType<TrackerRegistry['get']>>) {
-    if (!this.config || this.running.size === 0) return
+    if (this.stopping || !this.config || this.running.size === 0) return
     const stateMap = await adapter.fetchCurrentStates(this.config, [...this.running.keys()])
+    if (this.stopping) return
     for (const [issueId, entry] of this.running.entries()) {
       const currentState = stateMap.get(issueId)
       if (!currentState) continue
@@ -283,11 +325,12 @@ export class Orchestrator {
   }
 
   private async runRetryQueue(adapter: NonNullable<ReturnType<TrackerRegistry['get']>>) {
-    if (!this.config || this.retrying.size === 0) return
+    if (this.stopping || !this.config || this.retrying.size === 0) return
     const dueEntries = [...this.retrying.values()].filter((entry) => entry.dueAtMs <= Date.now())
     if (dueEntries.length === 0) return
 
     const activeIssues = await adapter.fetchCandidateIssues(this.config)
+    if (this.stopping) return
     const activeById = new Map(activeIssues.map((issue) => [issue.id, issue]))
 
     for (const retry of dueEntries) {
@@ -312,10 +355,11 @@ export class Orchestrator {
   }
 
   private async cleanupTerminalWorkspaces() {
-    if (!this.config) return
+    if (this.stopping || !this.config) return
     const adapter = this.registry.get(this.config.tracker.kind)
     if (!adapter) return
     const terminalIssues = await adapter.fetchTerminalIssues(this.config)
+    if (this.stopping) return
     const manager = new WorkspaceManager(this.config.workspace.root, this.config.hooks)
     for (const issue of terminalIssues) {
       manager.removeWorkspace(issue.identifier)
