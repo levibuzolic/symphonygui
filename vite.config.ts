@@ -1,14 +1,17 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import electron from 'vite-plugin-electron/simple'
+import electron from 'vite-plugin-electron'
 
 export default defineConfig({
   plugins: [
     react(),
-    electron({
-      main: {
+    electron([
+      {
         entry: 'src/main/index.ts',
+        onstart({ startup: startElectron }) {
+          void startElectron()
+        },
         vite: {
           build: {
             outDir: 'dist-electron',
@@ -26,22 +29,29 @@ export default defineConfig({
           },
         },
       },
-      preload: {
-        input: 'src/main/preload.ts',
+      {
+        entry: 'src/main/preload.ts',
+        onstart({ reload }) {
+          reload()
+        },
         vite: {
           build: {
             outDir: 'dist-electron',
             sourcemap: true,
+            lib: {
+              entry: 'src/main/preload.ts',
+              formats: ['cjs'],
+              fileName: () => 'preload.cjs',
+            },
             rollupOptions: {
               output: {
                 format: 'cjs',
-                entryFileNames: 'preload.cjs',
               },
             },
           },
         },
       },
-    }),
+    ]),
   ],
   resolve: {
     alias: {

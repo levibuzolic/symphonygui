@@ -123,7 +123,10 @@ describe('renderer app', () => {
     const { container } = render(<App />)
 
     await screen.findByText('Symphony status')
-    expect(String((container as unknown as { innerHTML?: string }).innerHTML ?? '')).toContain('h-screen overflow-hidden bg-background text-foreground')
+    const html = String((container as unknown as { innerHTML?: string }).innerHTML ?? '')
+    expect(html).toContain('h-screen overflow-hidden bg-background text-foreground')
+    expect(html).toContain('grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] overflow-hidden')
+    expect(html).not.toContain('grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] gap-4 overflow-hidden px-8 py-6')
   })
 
   it('marks the title chrome as draggable and header controls as no-drag', async () => {

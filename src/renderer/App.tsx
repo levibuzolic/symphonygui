@@ -190,9 +190,9 @@ export function App() {
             </div>
           </header>
 
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] gap-4 overflow-hidden px-8 py-6">
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] overflow-hidden">
             <section className="min-h-0 overflow-auto">
-              <div className="space-y-0 pr-1">
+              <div className="space-y-0 px-8 py-6 pr-6">
                 {activeView === 'overview' ? (
                   <OverviewView snapshot={snapshot} filtered={filtered} onSelect={setSelectedKey} selectedKey={selectedKey} />
                 ) : null}
@@ -220,8 +220,8 @@ export function App() {
               </div>
             </section>
 
-            <aside className="min-h-0 overflow-auto">
-              <div className="pl-1">
+            <aside className="min-h-0 overflow-auto border-l border-white/5">
+              <div className="px-6 py-6">
                 <InspectorPanel
                   activeView={activeView}
                   selectedRunning={selectedRunning}

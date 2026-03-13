@@ -10,6 +10,7 @@ import { MemoryTrackerAdapter } from './tracker/memory-adapter'
 import { Orchestrator } from './runtime/orchestrator'
 import { ObservabilityHttpServer } from './http/observability-http-server'
 import { safeSendToWindow } from './window-publisher'
+import { createWindowStateStore } from './services/window-state'
 
 const workflowLoader = new WorkflowLoader()
 const store = new ObservabilityStore()
@@ -24,8 +25,10 @@ const httpServer = new ObservabilityHttpServer(store, orchestrator)
 let mainWindow: BrowserWindow | null = null
 let unsubscribeSnapshotListener: (() => void) | null = null
 let isQuitting = false
+let persistWindowStateTimeout: NodeJS.Timeout | null = null
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const windowStateStore = createWindowStateStore(app.getPath('userData'))
 
 if (!hasSingleInstanceLock) {
   app.quit()
@@ -49,9 +52,12 @@ function createWindow() {
     return mainWindow
   }
 
+  const windowState = windowStateStore.load()
   mainWindow = new BrowserWindow({
-    width: 1560,
-    height: 980,
+    width: windowState.bounds.width,
+    height: windowState.bounds.height,
+    x: windowState.bounds.x,
+    y: windowState.bounds.y,
     minWidth: 1200,
     minHeight: 760,
     backgroundColor: '#050505',
@@ -75,7 +81,42 @@ function createWindow() {
     })
   }
 
+  if (windowState.isMaximized) {
+    mainWindow.maximize()
+  }
+
+  const persistWindowState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return
+    }
+
+    windowStateStore.save({
+      bounds: mainWindow.isMaximized() ? mainWindow.getNormalBounds() : mainWindow.getBounds(),
+      isMaximized: mainWindow.isMaximized(),
+    })
+  }
+
+  const schedulePersistWindowState = () => {
+    if (persistWindowStateTimeout) {
+      clearTimeout(persistWindowStateTimeout)
+    }
+
+    persistWindowStateTimeout = setTimeout(() => {
+      persistWindowStateTimeout = null
+      persistWindowState()
+    }, 150)
+  }
+
+  mainWindow.on('move', schedulePersistWindowState)
+  mainWindow.on('resize', schedulePersistWindowState)
+  mainWindow.on('maximize', schedulePersistWindowState)
+  mainWindow.on('unmaximize', schedulePersistWindowState)
+  mainWindow.on('close', persistWindowState)
   mainWindow.on('closed', () => {
+    if (persistWindowStateTimeout) {
+      clearTimeout(persistWindowStateTimeout)
+      persistWindowStateTimeout = null
+    }
     mainWindow = null
   })
 
