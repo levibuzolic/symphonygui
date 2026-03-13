@@ -191,42 +191,46 @@ export function App() {
           </header>
 
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] gap-4 overflow-hidden px-8 py-6">
-            <section className="min-h-0 overflow-auto pr-1">
-              {activeView === 'overview' ? (
-                <OverviewView snapshot={snapshot} filtered={filtered} onSelect={setSelectedKey} selectedKey={selectedKey} />
-              ) : null}
-              {activeView === 'running' ? (
-                <RunningView running={filtered.running} onSelect={setSelectedKey} selectedKey={selectedKey} />
-              ) : null}
-              {activeView === 'logs' ? <LogsView logs={filtered.logs} onSelect={setSelectedKey} selectedKey={selectedKey} /> : null}
-              {activeView === 'integrations' ? (
-                <IntegrationsView integrations={filtered.integrations} onSelect={setSelectedKey} selectedKey={selectedKey} />
-              ) : null}
-              {activeView === 'settings' ? (
-                <SettingsView
-                  snapshot={snapshot}
-                  bootstrap={bootstrap}
-                  workflowDocument={workflowDocument}
-                  workflowDraft={workflowDraft}
-                  isWorkflowDirty={isWorkflowDirty}
-                  isSavingWorkflow={isSavingWorkflow}
-                  workflowStatus={workflowStatus}
-                  onWorkflowDraftChange={setWorkflowDraft}
-                  onWorkflowReload={() => void reloadWorkflowDocument()}
-                  onWorkflowSave={() => void saveWorkflowDocument()}
-                />
-              ) : null}
+            <section className="min-h-0 overflow-auto">
+              <div className="space-y-0 pr-1">
+                {activeView === 'overview' ? (
+                  <OverviewView snapshot={snapshot} filtered={filtered} onSelect={setSelectedKey} selectedKey={selectedKey} />
+                ) : null}
+                {activeView === 'running' ? (
+                  <RunningView running={filtered.running} onSelect={setSelectedKey} selectedKey={selectedKey} />
+                ) : null}
+                {activeView === 'logs' ? <LogsView logs={filtered.logs} onSelect={setSelectedKey} selectedKey={selectedKey} /> : null}
+                {activeView === 'integrations' ? (
+                  <IntegrationsView integrations={filtered.integrations} onSelect={setSelectedKey} selectedKey={selectedKey} />
+                ) : null}
+                {activeView === 'settings' ? (
+                  <SettingsView
+                    snapshot={snapshot}
+                    bootstrap={bootstrap}
+                    workflowDocument={workflowDocument}
+                    workflowDraft={workflowDraft}
+                    isWorkflowDirty={isWorkflowDirty}
+                    isSavingWorkflow={isSavingWorkflow}
+                    workflowStatus={workflowStatus}
+                    onWorkflowDraftChange={setWorkflowDraft}
+                    onWorkflowReload={() => void reloadWorkflowDocument()}
+                    onWorkflowSave={() => void saveWorkflowDocument()}
+                  />
+                ) : null}
+              </div>
             </section>
 
-            <aside className="min-h-0 overflow-auto pl-1">
-              <InspectorPanel
-                activeView={activeView}
-                selectedRunning={selectedRunning}
-                selectedRetry={selectedRetry}
-                selectedLog={selectedLog}
-                selectedIntegration={selectedIntegration}
-                snapshot={snapshot}
-              />
+            <aside className="min-h-0 overflow-auto">
+              <div className="pl-1">
+                <InspectorPanel
+                  activeView={activeView}
+                  selectedRunning={selectedRunning}
+                  selectedRetry={selectedRetry}
+                  selectedLog={selectedLog}
+                  selectedIntegration={selectedIntegration}
+                  snapshot={snapshot}
+                />
+              </div>
             </aside>
           </div>
         </main>
