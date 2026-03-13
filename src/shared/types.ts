@@ -37,6 +37,101 @@ export interface TrackerDescriptor {
   description: string;
 }
 
+export interface LocalKanbanSettings {
+  enabled: boolean;
+  initialized: boolean;
+  databasePath: string | null;
+  lastOpenedBoardId: string | null;
+}
+
+export interface AppSettings {
+  onboardingCompleted: boolean;
+  activeTrackerKind: TrackerKind | null;
+  localKanban: LocalKanbanSettings;
+}
+
+export interface KanbanBoard {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KanbanColumn {
+  id: string;
+  boardId: string;
+  name: string;
+  position: number;
+  isActive: boolean;
+  isTerminal: boolean;
+}
+
+export interface KanbanTask {
+  id: string;
+  boardId: string;
+  columnId: string;
+  identifier: string;
+  title: string;
+  description: string | null;
+  priority: number | null;
+  branchName: string | null;
+  url: string | null;
+  position: number;
+  labels: string[];
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+export interface KanbanBoardPayload {
+  board: KanbanBoard;
+  columns: KanbanColumn[];
+  tasks: KanbanTask[];
+}
+
+export interface CreateKanbanTaskInput {
+  boardId: string;
+  columnId: string;
+  title: string;
+  description?: string | null;
+  priority?: number | null;
+  labels?: string[];
+}
+
+export interface UpdateKanbanTaskInput {
+  id: string;
+  title: string;
+  description?: string | null;
+  priority?: number | null;
+  columnId?: string;
+  labels?: string[];
+}
+
+export interface MoveKanbanTaskInput {
+  taskId: string;
+  targetColumnId: string;
+  targetPosition: number;
+}
+
+export interface UpdateKanbanBoardInput {
+  boardId: string;
+  name: string;
+}
+
+export interface CreateKanbanColumnInput {
+  boardId: string;
+  name: string;
+  isActive?: boolean;
+  isTerminal?: boolean;
+}
+
+export interface UpdateKanbanColumnInput {
+  id: string;
+  name: string;
+  isActive?: boolean;
+  isTerminal?: boolean;
+}
+
 export interface TrackerToolSpec {
   name: string;
   description: string;
@@ -220,6 +315,8 @@ export interface OrchestratorSnapshot {
 export interface BootstrapPayload {
   snapshot: OrchestratorSnapshot;
   trackers: TrackerDescriptor[];
+  settings: AppSettings;
+  kanbanBoards: KanbanBoard[];
   isDevelopment: boolean;
 }
 

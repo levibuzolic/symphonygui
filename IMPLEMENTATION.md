@@ -99,6 +99,26 @@ Acceptance criteria:
 
 Verification: Registry and shared contract design in `src/shared` and `src/main/tracker`.
 
+## Local Kanban
+Status: `In progress`
+
+- [x] Add app-level settings store for onboarding, active tracker selection, and local kanban visibility
+- [x] Add local SQLite store with schema bootstrap and seeded starter board
+- [x] Register a built-in `local` tracker adapter and auto-promote it when no external tracker is configured
+- [x] Add preload/IPC contracts for local kanban settings, board queries, and task CRUD
+- [x] Add first-run onboarding prompt and settings controls for enabling/disabling Local Kanban
+- [x] Add dedicated kanban Electron window and renderer route
+- [x] Refine drag/drop ordering, board editing, and task metadata polish
+- [ ] Validate second-window runtime behavior in smoke and packaged flows
+
+Acceptance criteria:
+- First-run users can choose Local Kanban without editing `WORKFLOW.md`.
+- Disabling Local Kanban hides the feature but never deletes the SQLite database.
+- When enabled and no valid external tracker exists, Local Kanban becomes the active tracker automatically.
+- The kanban board supports seeded defaults, task creation/editing, and column drag/drop in a dedicated window.
+
+Verification: Unit coverage now includes app settings persistence and local kanban store seeding/task operations. Full Electron verification still requires `npm run test:bundle` and `npm run smoke`.
+
 ## Packaging
 
 Status: `In progress`

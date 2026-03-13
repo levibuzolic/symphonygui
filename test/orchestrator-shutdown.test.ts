@@ -78,6 +78,16 @@ describe("orchestrator shutdown", () => {
       registry as never,
       store,
       new RuntimeLogger(),
+      () => ({
+        onboardingCompleted: true,
+        activeTrackerKind: "memory",
+        localKanban: {
+          enabled: false,
+          initialized: false,
+          databasePath: null,
+          lastOpenedBoardId: null,
+        },
+      }),
     );
 
     (orchestrator as unknown as { config: ReturnType<typeof createConfig> }).config =

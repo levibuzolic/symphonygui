@@ -1,5 +1,6 @@
 import { Liquid } from "liquidjs";
 import type {
+  AppSettings,
   IssueDetailPayload,
   NormalizedIssue,
   RunningEntry,
@@ -12,6 +13,7 @@ import { ObservabilityStore } from "./observability-store";
 import { WorkflowLoader } from "./workflow-loader";
 import { WorkspaceManager } from "./workspace-manager";
 import type { TrackerRegistry } from "../tracker/registry";
+import { resolveEffectiveTrackerKind } from "../tracker/tracker-selection";
 
 export class Orchestrator {
   private static readonly CONTINUATION_DELAY_MS = 1000;
@@ -48,6 +50,7 @@ export class Orchestrator {
     private registry: TrackerRegistry,
     private store: ObservabilityStore,
     private logger: RuntimeLogger,
+    private getSettings: () => AppSettings,
   ) {
     this.workflowDefinition = this.workflowLoader.getCurrent() ?? null;
     this.agentRunner.on("update", (event) => {
@@ -106,6 +109,10 @@ export class Orchestrator {
     await this.tick();
   }
 
+  async reloadRuntimeConfig() {
+    await this.reload();
+  }
+
   getIssue(identifier: string) {
     return (
       [...this.running.values()].find((entry) => entry.issue.identifier === identifier)?.issue ??
@@ -152,6 +159,23 @@ export class Orchestrator {
         return;
       }
       this.config = this.configLayer.parse(this.workflowDefinition);
+      const effectiveTrackerKind =
+        resolveEffectiveTrackerKind(this.config, this.getSettings()) ?? this.config.tracker.kind;
+      this.config = {
+        ...this.config,
+        tracker: {
+          ...this.config.tracker,
+          kind: effectiveTrackerKind,
+          activeStates:
+            effectiveTrackerKind === "local"
+              ? ["Todo", "In Progress", "Blocked"]
+              : this.config.tracker.activeStates,
+          terminalStates:
+            effectiveTrackerKind === "local"
+              ? ["Done"]
+              : this.config.tracker.terminalStates,
+        },
+      };
       const adapter = this.registry.get(this.config.tracker.kind);
       this.store.setTracker(adapter?.descriptor(this.config) ?? null);
       this.store.update({

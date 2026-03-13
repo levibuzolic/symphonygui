@@ -33,6 +33,16 @@ Hello {{ issue.identifier }}
       new TrackerRegistry(new Map([["memory", new MemoryTrackerAdapter()]])),
       store,
       new RuntimeLogger(),
+      () => ({
+        onboardingCompleted: true,
+        activeTrackerKind: "memory",
+        localKanban: {
+          enabled: false,
+          initialized: false,
+          databasePath: null,
+          lastOpenedBoardId: null,
+        },
+      }),
     );
 
     await orchestrator.start();
