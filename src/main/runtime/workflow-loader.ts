@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { existsSync, readFileSync, watch } from 'node:fs'
+import { existsSync, readFileSync, watch, type FSWatcher } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 import type { WorkflowDefinition } from '@shared/types'
@@ -8,6 +8,7 @@ export class WorkflowLoader extends EventEmitter {
   private workflowPath: string
   private currentDefinition: WorkflowDefinition | null = null
   private lastGoodDefinition: WorkflowDefinition | null = null
+  private watcher: FSWatcher | null = null
 
   constructor(workflowPath = resolve(process.cwd(), 'WORKFLOW.md')) {
     super()
@@ -35,11 +36,11 @@ export class WorkflowLoader extends EventEmitter {
   }
 
   startWatching() {
-    if (!existsSync(this.workflowPath)) {
+    if (!existsSync(this.workflowPath) || this.watcher) {
       return
     }
 
-    watch(this.workflowPath, { persistent: false }, () => {
+    this.watcher = watch(this.workflowPath, { persistent: false }, () => {
       try {
         const definition = this.load()
         this.emit('updated', definition)
@@ -47,6 +48,11 @@ export class WorkflowLoader extends EventEmitter {
         this.emit('error', error)
       }
     })
+  }
+
+  stopWatching() {
+    this.watcher?.close()
+    this.watcher = null
   }
 }
 

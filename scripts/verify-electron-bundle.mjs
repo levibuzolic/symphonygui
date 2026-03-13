@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 const mainBundlePath = resolve(process.cwd(), 'dist-electron/index.cjs')
 const preloadBundlePath = resolve(process.cwd(), 'dist-electron/preload.cjs')
+const staleMainBundlePath = resolve(process.cwd(), 'dist-electron/index.js')
+const stalePreloadBundlePath = resolve(process.cwd(), 'dist-electron/preload.mjs')
 
 const mainBundle = readFileSync(mainBundlePath, 'utf8')
 const preloadBundle = readFileSync(preloadBundlePath, 'utf8')
@@ -15,6 +18,23 @@ if (mainBundle.includes(forbiddenFallback) || preloadBundle.includes(forbiddenFa
 
 if (!mainBundle.includes('exports') && !mainBundle.includes('module.exports')) {
   throw new Error('Electron main bundle was not emitted as CommonJS.')
+}
+
+for (const staleArtifactPath of [staleMainBundlePath, stalePreloadBundlePath]) {
+  try {
+    readFileSync(staleArtifactPath, 'utf8')
+    throw new Error(`Stale Electron artifact present: ${staleArtifactPath}`)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error
+    }
+  }
+}
+
+const syntaxCheck = spawnSync(process.execPath, ['--check', mainBundlePath], { encoding: 'utf8' })
+
+if (syntaxCheck.status !== 0) {
+  throw new Error(`Electron main bundle failed CommonJS syntax check:\n${syntaxCheck.stderr || syntaxCheck.stdout}`)
 }
 
 console.log('Electron bundle verification passed.')

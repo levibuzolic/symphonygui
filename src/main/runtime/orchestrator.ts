@@ -19,6 +19,15 @@ export class Orchestrator {
   private running = new Map<string, RunningEntry>()
   private retrying = new Map<string, { issue: NormalizedIssue; dueAtMs: number; attempt: number; error: string | null }>()
 
+  private workflowUpdatedHandler = () => {
+    void this.reload()
+  }
+
+  private workflowErrorHandler = (error: unknown) => {
+    this.logger.error('workflow', 'Workflow reload failed', { error: String(error) })
+    this.store.setErrors([String(error)])
+  }
+
   constructor(
     private workflowLoader: WorkflowLoader,
     private registry: TrackerRegistry,
@@ -50,11 +59,8 @@ export class Orchestrator {
 
   async start() {
     this.workflowLoader.startWatching()
-    this.workflowLoader.on('updated', () => void this.reload())
-    this.workflowLoader.on('error', (error) => {
-      this.logger.error('workflow', 'Workflow reload failed', { error: String(error) })
-      this.store.setErrors([String(error)])
-    })
+    this.workflowLoader.on('updated', this.workflowUpdatedHandler)
+    this.workflowLoader.on('error', this.workflowErrorHandler)
     await this.reload()
     this.schedule()
   }
@@ -64,6 +70,9 @@ export class Orchestrator {
       clearTimeout(this.timer)
       this.timer = null
     }
+    this.workflowLoader.off('updated', this.workflowUpdatedHandler)
+    this.workflowLoader.off('error', this.workflowErrorHandler)
+    this.workflowLoader.stopWatching()
   }
 
   async refreshNow() {

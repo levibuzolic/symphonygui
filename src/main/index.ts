@@ -22,6 +22,8 @@ const orchestrator = new Orchestrator(workflowLoader, registry, store, logger)
 const httpServer = new ObservabilityHttpServer(store, orchestrator)
 
 let mainWindow: BrowserWindow | null = null
+let unsubscribeSnapshotListener: (() => void) | null = null
+let isQuitting = false
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -34,14 +36,25 @@ function createWindow() {
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
     },
+    show: !process.env.SYMPHONY_SMOKE_TEST,
   })
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL
   if (devServerUrl) {
     void mainWindow.loadURL(devServerUrl)
   } else {
-    void mainWindow.loadFile(join(__dirname, '../../dist/index.html'))
+    void mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
+
+  if (process.env.SYMPHONY_SMOKE_TEST) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => app.quit(), 300)
+    })
+  }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 }
 
 app.whenReady().then(async () => {
@@ -60,9 +73,35 @@ app.whenReady().then(async () => {
   }
   createWindow()
 
-  store.on('snapshot', (snapshotUpdate) => {
-    mainWindow?.webContents.send('runtime:snapshot', snapshotUpdate)
-  })
+  const publishSnapshot = (snapshotUpdate: BootstrapPayload['snapshot']) => {
+    if (isQuitting) {
+      return
+    }
+    const targetWindow = mainWindow
+    if (!targetWindow || targetWindow.isDestroyed()) {
+      return
+    }
+
+    const contents = targetWindow.webContents
+    if (contents.isDestroyed() || contents.isCrashed()) {
+      return
+    }
+
+    try {
+      contents.send('runtime:snapshot', snapshotUpdate)
+    } catch {
+      // Ignore late sends during shutdown / HMR teardown.
+    }
+  }
+
+  const snapshotListener = (snapshotUpdate: BootstrapPayload['snapshot']) => {
+    publishSnapshot(snapshotUpdate)
+  }
+
+  store.on('snapshot', snapshotListener)
+  unsubscribeSnapshotListener = () => {
+    store.off('snapshot', snapshotListener)
+  }
 
   ipcMain.handle('app:getBootstrap', async (): Promise<BootstrapPayload> => ({
     snapshot: store.getSnapshot(),
@@ -82,9 +121,20 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  isQuitting = true
+  unsubscribeSnapshotListener?.()
+  unsubscribeSnapshotListener = null
   if (process.platform !== 'darwin') {
     orchestrator.stop()
     httpServer.stop()
     app.quit()
   }
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
+  unsubscribeSnapshotListener?.()
+  unsubscribeSnapshotListener = null
+  orchestrator.stop()
+  httpServer.stop()
 })
