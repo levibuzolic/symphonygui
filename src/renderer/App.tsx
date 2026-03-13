@@ -4,6 +4,7 @@ import {
   Activity,
   Boxes,
   ChevronRight,
+  Columns3,
   Cog,
   Copy,
   Database,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import type { SymphonyApi } from "@shared/ipc";
 import type {
+  AppSettings,
   BootstrapPayload,
   OrchestratorSnapshot,
   RetryEntry,
@@ -27,6 +29,7 @@ import { Badge } from "./components/ui/badge";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
 import { formatDurationMs, formatInt, formatRelativeTime } from "./lib/format";
+import { KanbanWindow } from "./components/kanban/kanban-window";
 
 const navItems = [
   { id: "overview", label: "Overview", icon: Activity },
@@ -39,6 +42,8 @@ const navItems = [
 type ViewId = (typeof navItems)[number]["id"];
 
 export function App() {
+  const isKanbanRoute =
+    ((globalThis as { location?: { hash?: string } }).location?.hash ?? "") === "#kanban";
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
   const [snapshot, setSnapshot] = useState<OrchestratorSnapshot | null>(null);
   const [activeView, setActiveView] = useState<ViewId>("overview");
@@ -83,6 +88,10 @@ export function App() {
     );
   }
 
+  if (isKanbanRoute) {
+    return <KanbanWindow bootstrap={bootstrap} onBootstrapRefresh={setBootstrap} />;
+  }
+
   const isWorkflowDirty = workflowDocument !== null && workflowDraft !== workflowDocument.contents;
   const filtered = createFilteredState(snapshot, bootstrap.trackers, searchQuery);
   const selectedRunning =
@@ -91,6 +100,11 @@ export function App() {
   const selectedLog = filtered.logs.find((entry) => entry.id === selectedKey) ?? null;
   const selectedIntegration =
     filtered.integrations.find((entry) => entry.kind === selectedKey) ?? null;
+  const showOnboarding =
+    !bootstrap.settings.onboardingCompleted &&
+    !bootstrap.settings.localKanban.enabled &&
+    !bootstrap.settings.activeTrackerKind &&
+    !snapshot.tracker;
 
   const reloadWorkflowDocument = async () => {
     const document = await symphony.getWorkflowDocument();
@@ -159,6 +173,17 @@ export function App() {
                 </Button>
               );
             })}
+            {bootstrap.settings.localKanban.enabled ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full justify-start gap-3"
+                onClick={() => void symphony.openKanbanWindow()}
+              >
+                <Columns3 className="h-4 w-4" />
+                Kanban
+              </Button>
+            ) : null}
           </nav>
 
           <Card className="mt-6">
@@ -282,6 +307,15 @@ export function App() {
                     onWorkflowDraftChange={setWorkflowDraft}
                     onWorkflowReload={() => void reloadWorkflowDocument()}
                     onWorkflowSave={() => void saveWorkflowDocument()}
+                    onEnableLocalKanban={async () => {
+                      await symphony.enableLocalKanban();
+                      await reloadBootstrap(symphony, setBootstrap, setSnapshot);
+                    }}
+                    onDisableLocalKanban={async () => {
+                      await symphony.disableLocalKanban();
+                      await reloadBootstrap(symphony, setBootstrap, setSnapshot);
+                    }}
+                    onOpenKanban={() => void symphony.openKanbanWindow()}
                   />
                 ) : null}
               </div>
@@ -302,6 +336,21 @@ export function App() {
           </div>
         </main>
       </div>
+      {showOnboarding ? (
+        <OnboardingModal
+          settings={bootstrap.settings}
+          onUseLocalKanban={async () => {
+            await symphony.enableLocalKanban();
+            await reloadBootstrap(symphony, setBootstrap, setSnapshot);
+            await symphony.openKanbanWindow();
+          }}
+          onSetUpIntegration={() => setActiveView("settings")}
+          onSkip={async () => {
+            await symphony.completeOnboarding();
+            await reloadBootstrap(symphony, setBootstrap, setSnapshot);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -487,6 +536,9 @@ function SettingsView({
   onWorkflowDraftChange,
   onWorkflowReload,
   onWorkflowSave,
+  onEnableLocalKanban,
+  onDisableLocalKanban,
+  onOpenKanban,
 }: {
   snapshot: OrchestratorSnapshot;
   bootstrap: BootstrapPayload;
@@ -498,6 +550,9 @@ function SettingsView({
   onWorkflowDraftChange: (next: string) => void;
   onWorkflowReload: () => void;
   onWorkflowSave: () => void;
+  onEnableLocalKanban: () => void | Promise<void>;
+  onDisableLocalKanban: () => void | Promise<void>;
+  onOpenKanban: () => void;
 }) {
   return (
     <div className="space-y-4">
@@ -592,6 +647,46 @@ function SettingsView({
 
               <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
                 <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-500">
+                  Local kanban
+                </div>
+                <div className="space-y-4">
+                  <Detail
+                    label="Enabled"
+                    value={bootstrap.settings.localKanban.enabled ? "Yes" : "No"}
+                  />
+                  <Detail
+                    label="Active tracker"
+                    value={bootstrap.settings.activeTrackerKind ?? "None"}
+                  />
+                  <Detail
+                    label="Database"
+                    value={
+                      bootstrap.settings.localKanban.databasePath ??
+                      "Created on first Local Kanban enable"
+                    }
+                    mono
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {bootstrap.settings.localKanban.enabled ? (
+                      <>
+                        <Button type="button" onClick={onOpenKanban}>
+                          Open board
+                        </Button>
+                        <Button type="button" variant="outline" onClick={() => void onDisableLocalKanban()}>
+                          Hide Local Kanban
+                        </Button>
+                      </>
+                    ) : (
+                      <Button type="button" onClick={() => void onEnableLocalKanban()}>
+                        Enable Local Kanban
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-500">
                   Editing notes
                 </div>
                 <div className="space-y-3 text-sm text-muted-foreground">
@@ -604,12 +699,91 @@ function SettingsView({
                     Save writes to disk immediately. If the workflow becomes invalid, runtime errors
                     will surface in the logs and status panels.
                   </p>
+                  <p>
+                    Disabling Local Kanban only hides it from the UI. The local SQLite database is
+                    retained on disk.
+                  </p>
                 </div>
               </div>
             </div>
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function OnboardingModal({
+  settings,
+  onUseLocalKanban,
+  onSetUpIntegration,
+  onSkip,
+}: {
+  settings: AppSettings;
+  onUseLocalKanban: () => void | Promise<void>;
+  onSetUpIntegration: () => void;
+  onSkip: () => void | Promise<void>;
+}) {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-black/70 px-6">
+      <div className="w-full max-w-3xl overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.16),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0)),#09090b] shadow-[0_30px_140px_rgba(0,0,0,0.75)]">
+        <div className="grid gap-0 md:grid-cols-[1.2fr_0.8fr]">
+          <div className="border-b border-white/8 p-8 md:border-b-0 md:border-r">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.32em] text-amber-100/70">
+              First launch
+            </div>
+            <h2 className="max-w-xl text-4xl font-semibold tracking-tight text-white">
+              Start with the built-in board or connect an external tracker.
+            </h2>
+            <p className="mt-4 max-w-xl text-sm leading-6 text-zinc-400">
+              Symphony can run against external systems, but it can also ship with a local board so
+              you can start moving work immediately.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Button
+                type="button"
+                className="bg-amber-300 text-black hover:bg-amber-200"
+                onClick={() => void onUseLocalKanban()}
+              >
+                Use Local Kanban
+              </Button>
+              <Button type="button" variant="outline" onClick={onSetUpIntegration}>
+                Set Up Integration
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => void onSkip()}>
+                Skip for now
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-4 p-8">
+            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+              <div className="text-xs uppercase tracking-[0.24em] text-zinc-500">
+                Local defaults
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {["Inbox", "Todo", "In Progress", "Blocked", "Done"].map((label) => (
+                  <Badge key={label}>{label}</Badge>
+                ))}
+              </div>
+              <p className="mt-4 text-sm text-zinc-400">
+                The first board includes a sample task so the drag and edit flow is obvious on first
+                use.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+              <div className="text-xs uppercase tracking-[0.24em] text-zinc-500">
+                Current state
+              </div>
+              <div className="mt-3 text-sm text-zinc-300">
+                Active tracker: {settings.activeTrackerKind ?? "None selected"}
+              </div>
+              <div className="mt-1 text-sm text-zinc-400">
+                Local kanban: {settings.localKanban.enabled ? "Enabled" : "Disabled"}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1043,3 +1217,13 @@ function viewTitle(activeView: ViewId) {
 }
 
 type FilteredState = ReturnType<typeof createFilteredState>;
+
+async function reloadBootstrap(
+  symphony: SymphonyApi,
+  setBootstrap: (payload: BootstrapPayload) => void,
+  setSnapshot: (snapshot: OrchestratorSnapshot) => void,
+) {
+  const payload = await symphony.getBootstrap();
+  setBootstrap(payload);
+  setSnapshot(payload.snapshot);
+}

@@ -1,30 +1,43 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { join } from "node:path";
-import type { BootstrapPayload } from "@shared/types";
+import type {
+  BootstrapPayload,
+  CreateKanbanColumnInput,
+  CreateKanbanTaskInput,
+  MoveKanbanTaskInput,
+  UpdateKanbanBoardInput,
+  UpdateKanbanColumnInput,
+  UpdateKanbanTaskInput,
+} from "@shared/types";
 import { WorkflowLoader } from "./runtime/workflow-loader";
+import { ConfigLayer } from "./runtime/config-layer";
 import { ObservabilityStore } from "./runtime/observability-store";
 import { RuntimeLogger } from "./runtime/logger";
 import { TrackerRegistry } from "./tracker/registry";
 import { LinearTrackerAdapter } from "./tracker/linear-adapter";
 import { MemoryTrackerAdapter } from "./tracker/memory-adapter";
+import { LocalSqliteTrackerAdapter } from "./tracker/local-sqlite-adapter";
+import { LocalKanbanStore } from "./tracker/local-kanban-store";
+import { hasConfiguredExternalTracker } from "./tracker/tracker-selection";
 import { Orchestrator } from "./runtime/orchestrator";
 import { ObservabilityHttpServer } from "./http/observability-http-server";
 import { safeSendToWindow } from "./window-publisher";
 import { createWindowStateStore } from "./services/window-state";
+import { AppSettingsStore } from "./settings/app-settings-store";
 
 const workflowLoader = new WorkflowLoader();
+const configLayer = new ConfigLayer();
 const store = new ObservabilityStore();
 const logger = new RuntimeLogger();
-const registry = new TrackerRegistry(
-  new Map([
-    ["linear", new LinearTrackerAdapter()],
-    ["memory", new MemoryTrackerAdapter()],
-  ]),
-);
-const orchestrator = new Orchestrator(workflowLoader, registry, store, logger);
-const httpServer = new ObservabilityHttpServer(store, orchestrator);
+
+let settingsStore: AppSettingsStore;
+let kanbanStore: LocalKanbanStore;
+let registry: TrackerRegistry;
+let orchestrator: Orchestrator;
+let httpServer: ObservabilityHttpServer;
 
 let mainWindow: BrowserWindow | null = null;
+let kanbanWindow: BrowserWindow | null = null;
 let unsubscribeSnapshotListener: (() => void) | null = null;
 let isQuitting = false;
 let persistWindowStateTimeout: NodeJS.Timeout | null = null;
@@ -48,7 +61,22 @@ function focusWindow(targetWindow: BrowserWindow | null) {
   targetWindow.focus();
 }
 
-function createWindow() {
+function loadRendererWindow(targetWindow: BrowserWindow, hash = "") {
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    void targetWindow.loadURL(hash ? `${devServerUrl}/#${hash}` : devServerUrl);
+  } else {
+    void targetWindow.loadFile(join(__dirname, "../dist/index.html"), hash ? { hash } : undefined);
+  }
+
+  if (process.env.SYMPHONY_SMOKE_TEST) {
+    targetWindow.webContents.once("did-finish-load", () => {
+      setTimeout(() => app.quit(), 300);
+    });
+  }
+}
+
+function createMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     focusWindow(mainWindow);
     return mainWindow;
@@ -70,18 +98,7 @@ function createWindow() {
     show: !process.env.SYMPHONY_SMOKE_TEST,
   });
 
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devServerUrl) {
-    void mainWindow.loadURL(devServerUrl);
-  } else {
-    void mainWindow.loadFile(join(__dirname, "../dist/index.html"));
-  }
-
-  if (process.env.SYMPHONY_SMOKE_TEST) {
-    mainWindow.webContents.once("did-finish-load", () => {
-      setTimeout(() => app.quit(), 300);
-    });
-  }
+  loadRendererWindow(mainWindow);
 
   if (windowState.isMaximized) {
     mainWindow.maximize();
@@ -125,6 +142,96 @@ function createWindow() {
   return mainWindow;
 }
 
+function openKanbanWindow() {
+  if (kanbanWindow && !kanbanWindow.isDestroyed()) {
+    focusWindow(kanbanWindow);
+    return;
+  }
+
+  kanbanWindow = new BrowserWindow({
+    width: 1500,
+    height: 980,
+    minWidth: 1200,
+    minHeight: 760,
+    backgroundColor: "#050505",
+    titleBarStyle: "hiddenInset",
+    webPreferences: {
+      preload: join(__dirname, "preload.cjs"),
+    },
+    show: !process.env.SYMPHONY_SMOKE_TEST,
+  });
+
+  loadRendererWindow(kanbanWindow, "kanban");
+  kanbanWindow.on("closed", () => {
+    kanbanWindow = null;
+  });
+}
+
+function getSettings() {
+  return settingsStore.get();
+}
+
+function getEffectiveConfig() {
+  try {
+    const definition = workflowLoader.getCurrent() ?? workflowLoader.load();
+    return configLayer.parse(definition);
+  } catch {
+    return null;
+  }
+}
+
+function getTrackers() {
+  return registry.list(getEffectiveConfig() ?? undefined, getSettings());
+}
+
+function getKanbanBoards() {
+  return getSettings().localKanban.enabled ? kanbanStore.listBoards() : [];
+}
+
+function maybePromoteLocalKanban() {
+  const config = getEffectiveConfig();
+  if (config && hasConfiguredExternalTracker(config)) {
+    return settingsStore.get();
+  }
+  return settingsStore.setActiveTrackerKind("local");
+}
+
+async function enableLocalKanban() {
+  kanbanStore.initializeDefaults();
+  const firstBoard = kanbanStore.listBoards()[0] ?? null;
+  settingsStore.update({
+    onboardingCompleted: true,
+    localKanban: {
+      enabled: true,
+      initialized: true,
+      databasePath: kanbanStore.getDatabasePath(),
+      lastOpenedBoardId: firstBoard?.id ?? null,
+    },
+  });
+  maybePromoteLocalKanban();
+  await orchestrator.reloadRuntimeConfig();
+  await orchestrator.refreshNow();
+  return settingsStore.get();
+}
+
+async function disableLocalKanban() {
+  const current = settingsStore.get();
+  const next = settingsStore.update({
+    localKanban: {
+      ...current.localKanban,
+      enabled: false,
+    },
+  });
+  if (next.activeTrackerKind === "local") {
+    settingsStore.setActiveTrackerKind(null);
+  }
+  if (kanbanWindow && !kanbanWindow.isDestroyed()) {
+    kanbanWindow.close();
+  }
+  await orchestrator.reloadRuntimeConfig();
+  return settingsStore.get();
+}
+
 app.on("second-instance", () => {
   focusWindow(mainWindow);
 });
@@ -133,6 +240,32 @@ app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) {
     return;
   }
+
+  settingsStore = new AppSettingsStore(app.getPath("userData"));
+  kanbanStore = new LocalKanbanStore(join(app.getPath("userData"), "local-kanban.sqlite"));
+
+  const settings = settingsStore.get();
+  if (settings.localKanban.initialized) {
+    kanbanStore.initializeDefaults();
+    settingsStore.update({
+      localKanban: {
+        ...settings.localKanban,
+        databasePath: kanbanStore.getDatabasePath(),
+      },
+    });
+  }
+
+  registry = new TrackerRegistry(
+    new Map([
+      ["linear", new LinearTrackerAdapter()],
+      ["memory", new MemoryTrackerAdapter()],
+      ["local", new LocalSqliteTrackerAdapter(kanbanStore)],
+    ]),
+  );
+  orchestrator = new Orchestrator(workflowLoader, registry, store, logger, () =>
+    settingsStore.get(),
+  );
+  httpServer = new ObservabilityHttpServer(store, orchestrator);
 
   await orchestrator.start();
   const snapshot = store.getSnapshot();
@@ -157,7 +290,8 @@ app.whenReady().then(async () => {
       );
     }
   }
-  createWindow();
+
+  createMainWindow();
 
   const publishSnapshot = (snapshotUpdate: BootstrapPayload["snapshot"]) => {
     if (isQuitting) {
@@ -179,7 +313,9 @@ app.whenReady().then(async () => {
     "app:getBootstrap",
     async (): Promise<BootstrapPayload> => ({
       snapshot: store.getSnapshot(),
-      trackers: registry.list(),
+      trackers: getTrackers(),
+      settings: settingsStore.get(),
+      kanbanBoards: getKanbanBoards(),
       isDevelopment: !app.isPackaged,
     }),
   );
@@ -192,7 +328,7 @@ app.whenReady().then(async () => {
     orchestrator.getIssueDetails(identifier),
   );
   ipcMain.handle("runtime:getLogs", async () => store.getSnapshot().logs);
-  ipcMain.handle("integrations:list", async () => registry.list());
+  ipcMain.handle("integrations:list", async () => getTrackers());
   ipcMain.handle("workflow:getDocument", async () => workflowLoader.getDocument());
   ipcMain.handle("workflow:saveDocument", async (_event, contents: string) => {
     const document = workflowLoader.save(contents);
@@ -206,6 +342,41 @@ app.whenReady().then(async () => {
     }
     return document;
   });
+  ipcMain.handle("settings:get", async () => settingsStore.get());
+  ipcMain.handle("settings:completeOnboarding", async () => settingsStore.markOnboardingCompleted());
+  ipcMain.handle("kanban:enable", async () => enableLocalKanban());
+  ipcMain.handle("kanban:disable", async () => disableLocalKanban());
+  ipcMain.handle("kanban:openWindow", async () => {
+    openKanbanWindow();
+  });
+  ipcMain.handle("kanban:listBoards", async () => getKanbanBoards());
+  ipcMain.handle("kanban:getBoard", async (_event, boardId: string | null | undefined) => {
+    if (!settingsStore.get().localKanban.enabled) {
+      return null;
+    }
+    return kanbanStore.getBoard(boardId);
+  });
+  ipcMain.handle("kanban:createTask", async (_event, input: CreateKanbanTaskInput) =>
+    kanbanStore.createTask(input),
+  );
+  ipcMain.handle("kanban:updateTask", async (_event, input: UpdateKanbanTaskInput) =>
+    kanbanStore.updateTask(input),
+  );
+  ipcMain.handle("kanban:moveTask", async (_event, input: MoveKanbanTaskInput) =>
+    kanbanStore.moveTask(input),
+  );
+  ipcMain.handle("kanban:archiveTask", async (_event, taskId: string) =>
+    kanbanStore.archiveTask(taskId),
+  );
+  ipcMain.handle("kanban:updateBoard", async (_event, input: UpdateKanbanBoardInput) =>
+    kanbanStore.updateBoard(input),
+  );
+  ipcMain.handle("kanban:createColumn", async (_event, input: CreateKanbanColumnInput) =>
+    kanbanStore.createColumn(input),
+  );
+  ipcMain.handle("kanban:updateColumn", async (_event, input: UpdateKanbanColumnInput) =>
+    kanbanStore.updateColumn(input),
+  );
 });
 
 app.on("activate", () => {
@@ -215,7 +386,7 @@ app.on("activate", () => {
   }
 
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    createMainWindow();
   }
 });
 
@@ -224,8 +395,8 @@ app.on("window-all-closed", () => {
   unsubscribeSnapshotListener?.();
   unsubscribeSnapshotListener = null;
   if (process.platform !== "darwin") {
-    orchestrator.stop();
-    httpServer.stop();
+    orchestrator?.stop();
+    httpServer?.stop();
     app.quit();
   }
 });
@@ -234,6 +405,6 @@ app.on("before-quit", () => {
   isQuitting = true;
   unsubscribeSnapshotListener?.();
   unsubscribeSnapshotListener = null;
-  orchestrator.stop();
-  httpServer.stop();
+  orchestrator?.stop();
+  httpServer?.stop();
 });

@@ -6,6 +6,7 @@ Electron implementation of the Symphony service spec with:
 - React + TypeScript renderer
 - `shadcn/ui`-style component primitives over a Vercel-like dark operations UI
 - Tracker adapter architecture with Linear implemented first
+- Optional built-in Local Kanban tracker backed by SQLite for teams without Linear
 - In-repo implementation progress tracking via [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
 
 ## Scripts

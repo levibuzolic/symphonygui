@@ -10,6 +10,20 @@ const api: SymphonyApi = {
   listIntegrations: () => ipcRenderer.invoke("integrations:list"),
   getWorkflowDocument: () => ipcRenderer.invoke("workflow:getDocument"),
   saveWorkflowDocument: (contents) => ipcRenderer.invoke("workflow:saveDocument", contents),
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  completeOnboarding: () => ipcRenderer.invoke("settings:completeOnboarding"),
+  enableLocalKanban: () => ipcRenderer.invoke("kanban:enable"),
+  disableLocalKanban: () => ipcRenderer.invoke("kanban:disable"),
+  openKanbanWindow: () => ipcRenderer.invoke("kanban:openWindow"),
+  listKanbanBoards: () => ipcRenderer.invoke("kanban:listBoards"),
+  getKanbanBoard: (boardId) => ipcRenderer.invoke("kanban:getBoard", boardId),
+  createKanbanTask: (input) => ipcRenderer.invoke("kanban:createTask", input),
+  updateKanbanTask: (input) => ipcRenderer.invoke("kanban:updateTask", input),
+  moveKanbanTask: (input) => ipcRenderer.invoke("kanban:moveTask", input),
+  archiveKanbanTask: (taskId) => ipcRenderer.invoke("kanban:archiveTask", taskId),
+  updateKanbanBoard: (input) => ipcRenderer.invoke("kanban:updateBoard", input),
+  createKanbanColumn: (input) => ipcRenderer.invoke("kanban:createColumn", input),
+  updateKanbanColumn: (input) => ipcRenderer.invoke("kanban:updateColumn", input),
   onSnapshot: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: OrchestratorSnapshot) =>
       listener(snapshot);

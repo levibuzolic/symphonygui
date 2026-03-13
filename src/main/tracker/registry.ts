@@ -1,4 +1,4 @@
-import type { ServiceConfig, TrackerDescriptor } from "@shared/types";
+import type { AppSettings, ServiceConfig, TrackerDescriptor } from "@shared/types";
 import type { TrackerAdapter } from "./types";
 
 export class TrackerRegistry {
@@ -8,8 +8,10 @@ export class TrackerRegistry {
     return this.adapters.get(kind);
   }
 
-  list(config?: ServiceConfig): TrackerDescriptor[] {
-    return [...this.adapters.entries()].map(([kind, adapter]) =>
+  list(config?: ServiceConfig, settings?: AppSettings): TrackerDescriptor[] {
+    return [...this.adapters.entries()]
+      .filter(([kind]) => kind !== "local" || settings?.localKanban.enabled)
+      .map(([kind, adapter]) =>
       adapter.descriptor(
         config ?? {
           tracker: {
