@@ -38,6 +38,8 @@ export interface SymphonyApi {
   updateKanbanBoard(input: UpdateKanbanBoardInput): Promise<KanbanBoardPayload>;
   createKanbanColumn(input: CreateKanbanColumnInput): Promise<KanbanBoardPayload>;
   updateKanbanColumn(input: UpdateKanbanColumnInput): Promise<KanbanBoardPayload>;
+  onBootstrap(listener: (bootstrap: BootstrapPayload) => void): () => void;
+  onKanbanBoardChange(listener: (board: KanbanBoardPayload | null) => void): () => void;
   onSnapshot(listener: (snapshot: OrchestratorSnapshot) => void): () => void;
 }
 

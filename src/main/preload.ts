@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { SymphonyApi } from "@shared/ipc";
-import type { OrchestratorSnapshot } from "@shared/types";
+import type { BootstrapPayload, KanbanBoardPayload, OrchestratorSnapshot } from "@shared/types";
 
 const api: SymphonyApi = {
   getBootstrap: () => ipcRenderer.invoke("app:getBootstrap"),
@@ -24,6 +24,18 @@ const api: SymphonyApi = {
   updateKanbanBoard: (input) => ipcRenderer.invoke("kanban:updateBoard", input),
   createKanbanColumn: (input) => ipcRenderer.invoke("kanban:createColumn", input),
   updateKanbanColumn: (input) => ipcRenderer.invoke("kanban:updateColumn", input),
+  onBootstrap: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, bootstrap: BootstrapPayload) =>
+      listener(bootstrap);
+    ipcRenderer.on("app:bootstrap", wrapped);
+    return () => ipcRenderer.removeListener("app:bootstrap", wrapped);
+  },
+  onKanbanBoardChange: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, board: KanbanBoardPayload | null) =>
+      listener(board);
+    ipcRenderer.on("kanban:boardChanged", wrapped);
+    return () => ipcRenderer.removeListener("kanban:boardChanged", wrapped);
+  },
   onSnapshot: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, snapshot: OrchestratorSnapshot) =>
       listener(snapshot);

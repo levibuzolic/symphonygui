@@ -8,6 +8,8 @@ const refreshRuntime = vi.fn();
 const getWorkflowDocument = vi.fn();
 const saveWorkflowDocument = vi.fn();
 const openKanbanWindow = vi.fn();
+const enableLocalKanban = vi.fn();
+const disableLocalKanban = vi.fn();
 
 function createBootstrap(overrides: Partial<BootstrapPayload> = {}): BootstrapPayload {
   return {
@@ -70,6 +72,8 @@ function installSymphonyStub(bootstrap = createBootstrap()) {
   getWorkflowDocument.mockReset();
   saveWorkflowDocument.mockReset();
   openKanbanWindow.mockReset();
+  enableLocalKanban.mockReset();
+  disableLocalKanban.mockReset();
   getWorkflowDocument.mockResolvedValue({
     path: "/tmp/WORKFLOW.md",
     contents: "---\ntracker:\n  kind: linear\n---\nPrompt body",
@@ -90,8 +94,8 @@ function installSymphonyStub(bootstrap = createBootstrap()) {
     saveWorkflowDocument,
     getSettings: vi.fn(),
     completeOnboarding: vi.fn(),
-    enableLocalKanban: vi.fn(),
-    disableLocalKanban: vi.fn(),
+    enableLocalKanban,
+    disableLocalKanban,
     openKanbanWindow,
     listKanbanBoards: vi.fn(),
     getKanbanBoard: vi.fn(),
@@ -145,6 +149,42 @@ describe("renderer app", () => {
     ).toBeInTheDocument();
   });
 
+  it("updates the active integration from settings by rewriting the workflow file", async () => {
+    installSymphonyStub(
+      createBootstrap({
+        trackers: [
+          {
+            kind: "linear",
+            label: "Linear",
+            status: "active",
+            capabilities: ["candidate-fetch"],
+            description: "Linear adapter",
+          },
+          {
+            kind: "memory",
+            label: "Memory",
+            status: "available",
+            capabilities: ["candidate-fetch"],
+            description: "Memory adapter",
+          },
+        ],
+      }),
+    );
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    fireEvent.change(await screen.findByLabelText("Active integration"), {
+      target: { value: "memory" },
+    });
+
+    expect(saveWorkflowDocument).toHaveBeenCalledWith(
+      expect.stringContaining("kind: memory"),
+    );
+    expect(
+      await screen.findByText("Set active integration to memory in WORKFLOW.md."),
+    ).toBeInTheDocument();
+  });
+
   it("shows onboarding when no tracker is active and local kanban is disabled", async () => {
     installSymphonyStub(
       createBootstrap({
@@ -169,6 +209,31 @@ describe("renderer app", () => {
     expect(
       await screen.findByText("Start with the built-in board or connect an external tracker."),
     ).toBeInTheDocument();
+  });
+
+  it("routes onboarding integration setup into the integrations view", async () => {
+    installSymphonyStub(
+      createBootstrap({
+        settings: {
+          onboardingCompleted: false,
+          activeTrackerKind: null,
+          localKanban: {
+            enabled: false,
+            initialized: false,
+            databasePath: null,
+            lastOpenedBoardId: null,
+          },
+        },
+        snapshot: {
+          ...createBootstrap().snapshot,
+          tracker: null,
+        },
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Set Up Integration" }));
+    expect(await screen.findByText("Tracker integrations")).toBeInTheDocument();
   });
 
   it("shows a kanban sidebar action when local kanban is enabled", async () => {
@@ -217,6 +282,43 @@ describe("renderer app", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Kanban" }));
     expect(openKanbanWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables local kanban from the integrations view", async () => {
+    installSymphonyStub();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Integrations" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Enable Local Kanban" }));
+
+    expect(enableLocalKanban).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes linear configuration changes back to the workflow file from integrations", async () => {
+    installSymphonyStub();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Integrations" }));
+    fireEvent.change(screen.getByDisplayValue("https://api.linear.app/graphql"), {
+      target: { value: "https://linear.example/graphql" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("$LINEAR_API_KEY or literal token"), {
+      target: { value: "$NEW_LINEAR_TOKEN" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("team-project"), {
+      target: { value: "desktop" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply config" }));
+
+    expect(saveWorkflowDocument).toHaveBeenCalledWith(
+      expect.stringContaining("api_key: $NEW_LINEAR_TOKEN"),
+    );
+    expect(saveWorkflowDocument).toHaveBeenCalledWith(
+      expect.stringContaining("project_slug: desktop"),
+    );
+    expect(saveWorkflowDocument).toHaveBeenCalledWith(
+      expect.stringContaining("endpoint: https://linear.example/graphql"),
+    );
   });
 
   it("triggers a refresh from the header action", async () => {

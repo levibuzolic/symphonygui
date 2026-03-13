@@ -23,6 +23,7 @@ import type {
   TrackerDescriptor,
   WorkflowDocument,
 } from "@shared/types";
+import YAML from "yaml";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { Badge } from "./components/ui/badge";
@@ -31,10 +32,34 @@ import { Textarea } from "./components/ui/textarea";
 import { formatDurationMs, formatInt, formatRelativeTime } from "./lib/format";
 import { KanbanWindow } from "./components/kanban/kanban-window";
 
+type WorkflowFrontMatter = Record<string, unknown>;
+
+type WorkflowTrackerConfig = {
+  kind?: string;
+  endpoint?: string;
+  api_key?: string;
+  project_slug?: string;
+};
+
+type LinearIntegrationDraft = {
+  endpoint: string;
+  apiKey: string;
+  projectSlug: string;
+};
+
+const defaultLocalKanbanIntegration: TrackerDescriptor = {
+  kind: "local",
+  label: "Local Kanban",
+  status: "disabled",
+  capabilities: ["candidate-fetch", "state-refresh", "terminal-fetch", "local-kanban"],
+  description: "Built-in SQLite kanban board for teams without an external tracker.",
+};
+
 const navItems = [
   { id: "overview", label: "Overview", icon: Activity },
   { id: "running", label: "Running", icon: Boxes },
   { id: "logs", label: "Logs", icon: Logs },
+  { id: "kanban", label: "Kanban", icon: Columns3 },
   { id: "integrations", label: "Integrations", icon: Database },
   { id: "settings", label: "Settings", icon: Cog },
 ] as const;
@@ -60,6 +85,11 @@ export function App() {
   });
   const [isSavingWorkflow, setIsSavingWorkflow] = useState(false);
   const symphony = (globalThis as typeof globalThis & { symphony: SymphonyApi }).symphony;
+  const [linearDraft, setLinearDraft] = useState<LinearIntegrationDraft>({
+    endpoint: "https://api.linear.app/graphql",
+    apiKey: "",
+    projectSlug: "",
+  });
 
   useEffect(() => {
     void Promise.all([symphony.getBootstrap(), symphony.getWorkflowDocument()]).then(
@@ -70,8 +100,24 @@ export function App() {
         setWorkflowDraft(document.contents);
       },
     );
-    return symphony.onSnapshot((next: OrchestratorSnapshot) => setSnapshot(next));
+    const unsubscribeSnapshot = symphony.onSnapshot((next: OrchestratorSnapshot) =>
+      setSnapshot(next),
+    );
+    const unsubscribeBootstrap = symphony.onBootstrap((payload: BootstrapPayload) => {
+      setBootstrap(payload);
+      setSnapshot(payload.snapshot);
+    });
+    return () => {
+      unsubscribeSnapshot();
+      unsubscribeBootstrap();
+    };
   }, [symphony]);
+
+  useEffect(() => {
+    if (!bootstrap?.settings.localKanban.enabled && activeView === "kanban") {
+      setActiveView("overview");
+    }
+  }, [activeView, bootstrap?.settings.localKanban.enabled]);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -79,6 +125,15 @@ export function App() {
     const firstRetry = snapshot.retrying[0]?.identifier;
     setSelectedKey((current) => current ?? firstRunning ?? firstRetry ?? null);
   }, [snapshot]);
+
+  useEffect(() => {
+    const tracker = getWorkflowTrackerConfig(workflowDraft);
+    setLinearDraft({
+      endpoint: tracker.endpoint ?? "https://api.linear.app/graphql",
+      apiKey: tracker.api_key ?? "",
+      projectSlug: tracker.project_slug ?? "",
+    });
+  }, [workflowDraft]);
 
   if (!bootstrap || !snapshot) {
     return (
@@ -89,22 +144,27 @@ export function App() {
   }
 
   if (isKanbanRoute) {
-    return <KanbanWindow bootstrap={bootstrap} onBootstrapRefresh={setBootstrap} />;
+    return <KanbanWindow bootstrap={bootstrap} mode="window" />;
   }
 
   const isWorkflowDirty = workflowDocument !== null && workflowDraft !== workflowDocument.contents;
-  const filtered = createFilteredState(snapshot, bootstrap.trackers, searchQuery);
+  const allIntegrations = mergeIntegrationDescriptors(bootstrap.trackers, bootstrap.settings);
+  const filtered = createFilteredState(
+    snapshot,
+    allIntegrations,
+    searchQuery,
+  );
   const selectedRunning =
     filtered.running.find((entry) => entry.issue.identifier === selectedKey) ?? null;
   const selectedRetry = filtered.retrying.find((entry) => entry.identifier === selectedKey) ?? null;
   const selectedLog = filtered.logs.find((entry) => entry.id === selectedKey) ?? null;
-  const selectedIntegration =
-    filtered.integrations.find((entry) => entry.kind === selectedKey) ?? null;
+  const selectedIntegration = filtered.integrations.find((entry) => entry.kind === selectedKey) ?? null;
   const showOnboarding =
     !bootstrap.settings.onboardingCompleted &&
     !bootstrap.settings.localKanban.enabled &&
     !bootstrap.settings.activeTrackerKind &&
     !snapshot.tracker;
+  const activeWorkflowTrackerKind = getWorkflowTrackerConfig(workflowDraft).kind ?? "";
 
   const reloadWorkflowDocument = async () => {
     const document = await symphony.getWorkflowDocument();
@@ -121,6 +181,7 @@ export function App() {
       const document = await symphony.saveWorkflowDocument(workflowDraft);
       setWorkflowDocument(document);
       setWorkflowDraft(document.contents);
+      await reloadBootstrap(symphony, setBootstrap, setSnapshot);
       setWorkflowStatus({
         tone: "success",
         message: "Saved to WORKFLOW.md and refreshed the runtime.",
@@ -130,6 +191,58 @@ export function App() {
     } finally {
       setIsSavingWorkflow(false);
     }
+  };
+
+  const saveWorkflowContents = async (contents: string, successMessage: string) => {
+    setIsSavingWorkflow(true);
+    setWorkflowStatus({ tone: "idle", message: null });
+
+    try {
+      const document = await symphony.saveWorkflowDocument(contents);
+      setWorkflowDocument(document);
+      setWorkflowDraft(document.contents);
+      await reloadBootstrap(symphony, setBootstrap, setSnapshot);
+      setWorkflowStatus({ tone: "success", message: successMessage });
+    } catch (error) {
+      setWorkflowStatus({ tone: "error", message: `Save failed: ${String(error)}` });
+    } finally {
+      setIsSavingWorkflow(false);
+    }
+  };
+
+  const applyLinearConfiguration = async () => {
+    const nextContents = updateWorkflowDocument(workflowDraft, (config) => {
+      const tracker = getMutableTrackerConfig(config);
+      tracker.kind = "linear";
+      tracker.endpoint = linearDraft.endpoint.trim() || "https://api.linear.app/graphql";
+      tracker.api_key = linearDraft.apiKey.trim();
+      tracker.project_slug = linearDraft.projectSlug.trim();
+    });
+    await saveWorkflowContents(nextContents, "Updated Linear integration in WORKFLOW.md.");
+  };
+
+  const applyActiveIntegration = async (kind: string) => {
+    const nextContents = updateWorkflowDocument(workflowDraft, (config) => {
+      const tracker = getMutableTrackerConfig(config);
+      tracker.kind = kind;
+    });
+    await saveWorkflowContents(nextContents, `Set active integration to ${kind} in WORKFLOW.md.`);
+  };
+
+  const clearLinearConfiguration = async () => {
+    const nextContents = updateWorkflowDocument(workflowDraft, (config) => {
+      const tracker = getMutableTrackerConfig(config);
+      tracker.kind = "linear";
+      delete tracker.api_key;
+      delete tracker.project_slug;
+      tracker.endpoint = "https://api.linear.app/graphql";
+    });
+    setLinearDraft({
+      endpoint: "https://api.linear.app/graphql",
+      apiKey: "",
+      projectSlug: "",
+    });
+    await saveWorkflowContents(nextContents, "Cleared Linear credentials from WORKFLOW.md.");
   };
 
   return (
@@ -158,6 +271,9 @@ export function App() {
 
           <nav className="space-y-1">
             {navItems.map((item) => {
+              if (item.id === "kanban" && !bootstrap.settings.localKanban.enabled) {
+                return null;
+              }
               const Icon = item.icon;
               const active = activeView === item.id;
               return (
@@ -173,17 +289,6 @@ export function App() {
                 </Button>
               );
             })}
-            {bootstrap.settings.localKanban.enabled ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full justify-start gap-3"
-                onClick={() => void symphony.openKanbanWindow()}
-              >
-                <Columns3 className="h-4 w-4" />
-                Kanban
-              </Button>
-            ) : null}
           </nav>
 
           <Card className="mt-6">
@@ -260,10 +365,27 @@ export function App() {
                 <RefreshCw className="h-4 w-4" />
                 Refresh now
               </Button>
+              {activeView === "kanban" && bootstrap.settings.localKanban.enabled ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="app-no-drag gap-2"
+                  onClick={() => void symphony.openKanbanWindow()}
+                >
+                  <Columns3 className="h-4 w-4" />
+                  Open window
+                </Button>
+              ) : null}
             </div>
           </header>
 
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] overflow-hidden">
+          <div
+            className={
+              activeView === "kanban"
+                ? "min-h-0 flex-1 overflow-hidden"
+                : "grid min-h-0 flex-1 grid-cols-[minmax(0,1.7fr)_420px] overflow-hidden"
+            }
+          >
             <section className="min-h-0 overflow-auto">
               <div className="space-y-0 px-8 py-6 pr-6">
                 {activeView === "overview" ? (
@@ -288,25 +410,23 @@ export function App() {
                     selectedKey={selectedKey}
                   />
                 ) : null}
+                {activeView === "kanban" ? (
+                  <KanbanWindow
+                    bootstrap={bootstrap}
+                    mode="embedded"
+                    onOpenDetached={() => void symphony.openKanbanWindow()}
+                  />
+                ) : null}
                 {activeView === "integrations" ? (
                   <IntegrationsView
                     integrations={filtered.integrations}
+                    bootstrap={bootstrap}
                     onSelect={setSelectedKey}
                     selectedKey={selectedKey}
-                  />
-                ) : null}
-                {activeView === "settings" ? (
-                  <SettingsView
-                    snapshot={snapshot}
-                    bootstrap={bootstrap}
-                    workflowDocument={workflowDocument}
-                    workflowDraft={workflowDraft}
-                    isWorkflowDirty={isWorkflowDirty}
-                    isSavingWorkflow={isSavingWorkflow}
-                    workflowStatus={workflowStatus}
-                    onWorkflowDraftChange={setWorkflowDraft}
-                    onWorkflowReload={() => void reloadWorkflowDocument()}
-                    onWorkflowSave={() => void saveWorkflowDocument()}
+                    linearDraft={linearDraft}
+                    onLinearDraftChange={setLinearDraft}
+                    onApplyLinearConfiguration={() => void applyLinearConfiguration()}
+                    onClearLinearConfiguration={() => void clearLinearConfiguration()}
                     onEnableLocalKanban={async () => {
                       await symphony.enableLocalKanban();
                       await reloadBootstrap(symphony, setBootstrap, setSnapshot);
@@ -316,23 +436,43 @@ export function App() {
                       await reloadBootstrap(symphony, setBootstrap, setSnapshot);
                     }}
                     onOpenKanban={() => void symphony.openKanbanWindow()}
+                    isSavingWorkflow={isSavingWorkflow}
+                  />
+                ) : null}
+                {activeView === "settings" ? (
+                  <SettingsView
+                    snapshot={snapshot}
+                    bootstrap={bootstrap}
+                    integrations={allIntegrations}
+                    activeWorkflowTrackerKind={activeWorkflowTrackerKind}
+                    workflowDocument={workflowDocument}
+                    workflowDraft={workflowDraft}
+                    isWorkflowDirty={isWorkflowDirty}
+                    isSavingWorkflow={isSavingWorkflow}
+                    workflowStatus={workflowStatus}
+                    onWorkflowDraftChange={setWorkflowDraft}
+                    onWorkflowReload={() => void reloadWorkflowDocument()}
+                    onWorkflowSave={() => void saveWorkflowDocument()}
+                    onSelectActiveIntegration={(kind) => void applyActiveIntegration(kind)}
                   />
                 ) : null}
               </div>
             </section>
 
-            <aside className="min-h-0 overflow-auto border-l border-white/5">
-              <div className="px-6 py-6">
-                <InspectorPanel
-                  activeView={activeView}
-                  selectedRunning={selectedRunning}
-                  selectedRetry={selectedRetry}
-                  selectedLog={selectedLog}
-                  selectedIntegration={selectedIntegration}
-                  snapshot={snapshot}
-                />
-              </div>
-            </aside>
+            {activeView !== "kanban" ? (
+              <aside className="min-h-0 overflow-auto border-l border-white/5">
+                <div className="px-6 py-6">
+                  <InspectorPanel
+                    activeView={activeView}
+                    selectedRunning={selectedRunning}
+                    selectedRetry={selectedRetry}
+                    selectedLog={selectedLog}
+                    selectedIntegration={selectedIntegration}
+                    snapshot={snapshot}
+                  />
+                </div>
+              </aside>
+            ) : null}
           </div>
         </main>
       </div>
@@ -344,7 +484,7 @@ export function App() {
             await reloadBootstrap(symphony, setBootstrap, setSnapshot);
             await symphony.openKanbanWindow();
           }}
-          onSetUpIntegration={() => setActiveView("settings")}
+          onSetUpIntegration={() => setActiveView("integrations")}
           onSkip={async () => {
             await symphony.completeOnboarding();
             await reloadBootstrap(symphony, setBootstrap, setSnapshot);
@@ -489,12 +629,30 @@ function LogsView({
 
 function IntegrationsView({
   integrations,
+  bootstrap,
   onSelect,
   selectedKey,
+  linearDraft,
+  onLinearDraftChange,
+  onApplyLinearConfiguration,
+  onClearLinearConfiguration,
+  onEnableLocalKanban,
+  onDisableLocalKanban,
+  onOpenKanban,
+  isSavingWorkflow,
 }: {
   integrations: TrackerDescriptor[];
+  bootstrap: BootstrapPayload;
   onSelect: (key: string) => void;
   selectedKey: string | null;
+  linearDraft: LinearIntegrationDraft;
+  onLinearDraftChange: (next: LinearIntegrationDraft) => void;
+  onApplyLinearConfiguration: () => void;
+  onClearLinearConfiguration: () => void;
+  onEnableLocalKanban: () => void | Promise<void>;
+  onDisableLocalKanban: () => void | Promise<void>;
+  onOpenKanban: () => void;
+  isSavingWorkflow: boolean;
 }) {
   return (
     <Card>
@@ -509,17 +667,157 @@ function IntegrationsView({
           <Badge>{integrations.length}</Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {integrations.map((integration) => (
-          <SelectionRow
-            key={integration.kind}
-            title={integration.label}
-            subtitle={integration.description}
-            meta={integration.status}
-            selected={selectedKey === integration.kind}
-            onClick={() => onSelect(integration.kind)}
-          />
-        ))}
+      <CardContent className="space-y-4">
+        {integrations.map((integration) => {
+          const selected = selectedKey === integration.kind;
+          return (
+            <div
+              key={integration.kind}
+              className={`rounded-2xl border p-4 transition ${
+                selected ? "border-amber-300/40 bg-amber-400/5" : "border-white/5 bg-white/[0.02]"
+              }`}
+            >
+              <button
+                type="button"
+                className="flex w-full items-start justify-between gap-4 text-left"
+                onClick={() => onSelect(integration.kind)}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="text-base font-medium text-white">{integration.label}</div>
+                    <Badge variant={selected ? "secondary" : "outline"}>{integration.status}</Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-zinc-400">{integration.description}</p>
+                </div>
+                <ChevronRight
+                  className={`mt-1 h-4 w-4 shrink-0 text-zinc-500 transition ${
+                    selected ? "rotate-90 text-amber-200" : ""
+                  }`}
+                />
+              </button>
+
+              <div className="mt-4 space-y-4 border-t border-white/5 pt-4">
+                <div className="flex flex-wrap gap-2">
+                  {integration.capabilities.map((capability) => (
+                    <Badge key={capability} className="text-[10px] normal-case tracking-normal">
+                      {capability}
+                    </Badge>
+                  ))}
+                </div>
+
+                {integration.kind === "linear" ? (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                        API endpoint
+                      </label>
+                      <Input
+                        value={linearDraft.endpoint}
+                        onChange={(event) =>
+                          onLinearDraftChange({
+                            ...linearDraft,
+                            endpoint: String(
+                              (event.target as { value?: unknown }).value ?? "",
+                            ),
+                          })
+                        }
+                        placeholder="https://api.linear.app/graphql"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                        Project slug
+                      </label>
+                      <Input
+                        value={linearDraft.projectSlug}
+                        onChange={(event) =>
+                          onLinearDraftChange({
+                            ...linearDraft,
+                            projectSlug: String(
+                              (event.target as { value?: unknown }).value ?? "",
+                            ),
+                          })
+                        }
+                        placeholder="team-project"
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                        API key
+                      </label>
+                      <Input
+                        value={linearDraft.apiKey}
+                        onChange={(event) =>
+                          onLinearDraftChange({
+                            ...linearDraft,
+                            apiKey: String((event.target as { value?: unknown }).value ?? ""),
+                          })
+                        }
+                        placeholder="$LINEAR_API_KEY or literal token"
+                      />
+                    </div>
+                    <div className="md:col-span-2 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        onClick={onApplyLinearConfiguration}
+                        disabled={isSavingWorkflow}
+                      >
+                        Apply config
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={onClearLinearConfiguration}
+                        disabled={isSavingWorkflow}
+                      >
+                        Clear credentials
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {integration.kind === "local" ? (
+                  <div className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Detail
+                        label="Enabled"
+                        value={bootstrap.settings.localKanban.enabled ? "Yes" : "No"}
+                      />
+                      <Detail
+                        label="Database"
+                        value={
+                          bootstrap.settings.localKanban.databasePath ??
+                          "Created on first Local Kanban enable"
+                        }
+                        mono
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {bootstrap.settings.localKanban.enabled ? (
+                        <>
+                          <Button type="button" onClick={onOpenKanban}>
+                            Open board
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void onDisableLocalKanban()}
+                          >
+                            Disable Local Kanban
+                          </Button>
+                        </>
+                      ) : (
+                        <Button type="button" onClick={() => void onEnableLocalKanban()}>
+                          Enable Local Kanban
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );
@@ -528,6 +826,8 @@ function IntegrationsView({
 function SettingsView({
   snapshot,
   bootstrap,
+  integrations,
+  activeWorkflowTrackerKind,
   workflowDocument,
   workflowDraft,
   isWorkflowDirty,
@@ -536,12 +836,12 @@ function SettingsView({
   onWorkflowDraftChange,
   onWorkflowReload,
   onWorkflowSave,
-  onEnableLocalKanban,
-  onDisableLocalKanban,
-  onOpenKanban,
+  onSelectActiveIntegration,
 }: {
   snapshot: OrchestratorSnapshot;
   bootstrap: BootstrapPayload;
+  integrations: TrackerDescriptor[];
+  activeWorkflowTrackerKind: string;
   workflowDocument: WorkflowDocument | null;
   workflowDraft: string;
   isWorkflowDirty: boolean;
@@ -550,9 +850,7 @@ function SettingsView({
   onWorkflowDraftChange: (next: string) => void;
   onWorkflowReload: () => void;
   onWorkflowSave: () => void;
-  onEnableLocalKanban: () => void | Promise<void>;
-  onDisableLocalKanban: () => void | Promise<void>;
-  onOpenKanban: () => void;
+  onSelectActiveIntegration: (kind: string) => void;
 }) {
   return (
     <div className="space-y-4">
@@ -633,6 +931,48 @@ function SettingsView({
             <div className="space-y-4">
               <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
                 <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-500">
+                  Active integration
+                </div>
+                <div className="space-y-3">
+                  <label
+                    htmlFor="active-integration-select"
+                    className="text-sm text-zinc-400"
+                  >
+                    Choose which tracker adapter the workflow should use.
+                  </label>
+                  <select
+                    id="active-integration-select"
+                    aria-label="Active integration"
+                    value={activeWorkflowTrackerKind}
+                    onChange={(event) =>
+                      onSelectActiveIntegration(
+                        String((event.target as { value?: unknown }).value ?? ""),
+                      )
+                    }
+                    disabled={isSavingWorkflow}
+                    className="flex h-10 w-full rounded-md border border-white/8 bg-black/40 px-3 py-2 text-sm text-zinc-100 outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {integrations.map((integration) => (
+                      <option
+                        key={integration.kind}
+                        value={integration.kind}
+                        disabled={integration.kind === "local" && integration.status === "disabled"}
+                      >
+                        {integration.label}
+                        {integration.kind === "local" && integration.status === "disabled"
+                          ? " (enable in Integrations)"
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="text-xs text-zinc-500">
+                    This saves `tracker.kind` in `WORKFLOW.md` immediately.
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-500">
                   Runtime attachment
                 </div>
                 <div className="space-y-4">
@@ -642,46 +982,6 @@ function SettingsView({
                     label="Development mode"
                     value={bootstrap.isDevelopment ? "Enabled" : "Disabled"}
                   />
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
-                <div className="mb-3 text-xs uppercase tracking-[0.18em] text-zinc-500">
-                  Local kanban
-                </div>
-                <div className="space-y-4">
-                  <Detail
-                    label="Enabled"
-                    value={bootstrap.settings.localKanban.enabled ? "Yes" : "No"}
-                  />
-                  <Detail
-                    label="Active tracker"
-                    value={bootstrap.settings.activeTrackerKind ?? "None"}
-                  />
-                  <Detail
-                    label="Database"
-                    value={
-                      bootstrap.settings.localKanban.databasePath ??
-                      "Created on first Local Kanban enable"
-                    }
-                    mono
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    {bootstrap.settings.localKanban.enabled ? (
-                      <>
-                        <Button type="button" onClick={onOpenKanban}>
-                          Open board
-                        </Button>
-                        <Button type="button" variant="outline" onClick={() => void onDisableLocalKanban()}>
-                          Hide Local Kanban
-                        </Button>
-                      </>
-                    ) : (
-                      <Button type="button" onClick={() => void onEnableLocalKanban()}>
-                        Enable Local Kanban
-                      </Button>
-                    )}
-                  </div>
                 </div>
               </div>
 
@@ -699,10 +999,7 @@ function SettingsView({
                     Save writes to disk immediately. If the workflow becomes invalid, runtime errors
                     will surface in the logs and status panels.
                   </p>
-                  <p>
-                    Disabling Local Kanban only hides it from the UI. The local SQLite database is
-                    retained on disk.
-                  </p>
+                  <p>Integration-specific tracker settings now live in the Integrations view.</p>
                 </div>
               </div>
             </div>
@@ -1159,6 +1456,93 @@ function SelectionRow({
       </div>
     </button>
   );
+}
+
+function parseWorkflowEditorDocument(contents: string) {
+  const trimmed = contents.trimStart();
+  if (!trimmed.startsWith("---")) {
+    return {
+      config: {} as WorkflowFrontMatter,
+      body: contents.trim(),
+    };
+  }
+
+  const lines = contents.split(/\r?\n/);
+  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (endIndex <= 0) {
+    return {
+      config: {} as WorkflowFrontMatter,
+      body: contents.trim(),
+    };
+  }
+
+  const parsed = YAML.parse(lines.slice(1, endIndex).join("\n"));
+  if (parsed && typeof parsed !== "object") {
+    throw new Error("workflow_front_matter_not_a_map");
+  }
+
+  return {
+    config: (parsed ?? {}) as WorkflowFrontMatter,
+    body: lines.slice(endIndex + 1).join("\n").trim(),
+  };
+}
+
+function serializeWorkflowEditorDocument(config: WorkflowFrontMatter, body: string) {
+  const frontMatter = YAML.stringify(config).trimEnd();
+  if (!frontMatter) {
+    return body.trim();
+  }
+  return `---\n${frontMatter}\n---\n${body.trim()}`;
+}
+
+function updateWorkflowDocument(
+  contents: string,
+  updateConfig: (config: WorkflowFrontMatter) => void,
+) {
+  const parsed = parseWorkflowEditorDocument(contents);
+  const config: WorkflowFrontMatter = { ...parsed.config };
+  updateConfig(config);
+  return serializeWorkflowEditorDocument(config, parsed.body);
+}
+
+function getWorkflowTrackerConfig(contents: string): WorkflowTrackerConfig {
+  const parsed = parseWorkflowEditorDocument(contents);
+  const tracker = parsed.config.tracker;
+  if (!tracker || typeof tracker !== "object") {
+    return {};
+  }
+  return tracker as WorkflowTrackerConfig;
+}
+
+function getMutableTrackerConfig(config: WorkflowFrontMatter): WorkflowTrackerConfig {
+  const current = config.tracker;
+  if (!current || typeof current !== "object") {
+    const next: WorkflowTrackerConfig = {};
+    config.tracker = next;
+    return next;
+  }
+  return current as WorkflowTrackerConfig;
+}
+
+function mergeIntegrationDescriptors(integrations: TrackerDescriptor[], settings: AppSettings) {
+  const hasLocal = integrations.some((entry) => entry.kind === "local");
+  if (hasLocal) {
+    return integrations;
+  }
+
+  const status: TrackerDescriptor["status"] = settings.localKanban.enabled
+    ? settings.activeTrackerKind === "local"
+      ? "active"
+      : "available"
+    : "disabled";
+
+  return [
+    ...integrations,
+    {
+      ...defaultLocalKanbanIntegration,
+      status,
+    },
+  ];
 }
 
 function createFilteredState(

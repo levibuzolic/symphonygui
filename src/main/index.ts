@@ -61,6 +61,13 @@ function focusWindow(targetWindow: BrowserWindow | null) {
   targetWindow.focus();
 }
 
+function getOpenWindows() {
+  return [mainWindow, kanbanWindow].filter(
+    (targetWindow): targetWindow is BrowserWindow =>
+      targetWindow !== null && !targetWindow.isDestroyed(),
+  );
+}
+
 function loadRendererWindow(targetWindow: BrowserWindow, hash = "") {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
@@ -188,6 +195,38 @@ function getKanbanBoards() {
   return getSettings().localKanban.enabled ? kanbanStore.listBoards() : [];
 }
 
+function createBootstrapPayload(): BootstrapPayload {
+  return {
+    snapshot: store.getSnapshot(),
+    trackers: getTrackers(),
+    settings: settingsStore.get(),
+    kanbanBoards: getKanbanBoards(),
+    isDevelopment: !app.isPackaged,
+  };
+}
+
+function publishBootstrap() {
+  const payload = createBootstrapPayload();
+  for (const targetWindow of getOpenWindows()) {
+    safeSendToWindow(targetWindow, "app:bootstrap", payload);
+  }
+}
+
+function publishKanbanBoard(board: ReturnType<LocalKanbanStore["getBoard"]>) {
+  for (const targetWindow of getOpenWindows()) {
+    safeSendToWindow(targetWindow, "kanban:boardChanged", board);
+  }
+}
+
+async function runKanbanMutation(
+  action: () => ReturnType<LocalKanbanStore["getBoard"]>,
+): Promise<ReturnType<LocalKanbanStore["getBoard"]>> {
+  const payload = action();
+  publishBootstrap();
+  publishKanbanBoard(payload);
+  return payload;
+}
+
 function maybePromoteLocalKanban() {
   const config = getEffectiveConfig();
   if (config && hasConfiguredExternalTracker(config)) {
@@ -199,7 +238,7 @@ function maybePromoteLocalKanban() {
 async function enableLocalKanban() {
   kanbanStore.initializeDefaults();
   const firstBoard = kanbanStore.listBoards()[0] ?? null;
-  settingsStore.update({
+  const nextSettings = settingsStore.update({
     onboardingCompleted: true,
     localKanban: {
       enabled: true,
@@ -211,7 +250,9 @@ async function enableLocalKanban() {
   maybePromoteLocalKanban();
   await orchestrator.reloadRuntimeConfig();
   await orchestrator.refreshNow();
-  return settingsStore.get();
+  publishBootstrap();
+  publishKanbanBoard(firstBoard ? kanbanStore.getBoard(firstBoard.id) : null);
+  return nextSettings;
 }
 
 async function disableLocalKanban() {
@@ -229,6 +270,8 @@ async function disableLocalKanban() {
     kanbanWindow.close();
   }
   await orchestrator.reloadRuntimeConfig();
+  publishBootstrap();
+  publishKanbanBoard(null);
   return settingsStore.get();
 }
 
@@ -311,13 +354,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     "app:getBootstrap",
-    async (): Promise<BootstrapPayload> => ({
-      snapshot: store.getSnapshot(),
-      trackers: getTrackers(),
-      settings: settingsStore.get(),
-      kanbanBoards: getKanbanBoards(),
-      isDevelopment: !app.isPackaged,
-    }),
+    async (): Promise<BootstrapPayload> => createBootstrapPayload(),
   );
 
   ipcMain.handle("runtime:refresh", async () => {
@@ -357,25 +394,25 @@ app.whenReady().then(async () => {
     return kanbanStore.getBoard(boardId);
   });
   ipcMain.handle("kanban:createTask", async (_event, input: CreateKanbanTaskInput) =>
-    kanbanStore.createTask(input),
+    runKanbanMutation(() => kanbanStore.createTask(input)),
   );
   ipcMain.handle("kanban:updateTask", async (_event, input: UpdateKanbanTaskInput) =>
-    kanbanStore.updateTask(input),
+    runKanbanMutation(() => kanbanStore.updateTask(input)),
   );
   ipcMain.handle("kanban:moveTask", async (_event, input: MoveKanbanTaskInput) =>
-    kanbanStore.moveTask(input),
+    runKanbanMutation(() => kanbanStore.moveTask(input)),
   );
   ipcMain.handle("kanban:archiveTask", async (_event, taskId: string) =>
-    kanbanStore.archiveTask(taskId),
+    runKanbanMutation(() => kanbanStore.archiveTask(taskId)),
   );
   ipcMain.handle("kanban:updateBoard", async (_event, input: UpdateKanbanBoardInput) =>
-    kanbanStore.updateBoard(input),
+    runKanbanMutation(() => kanbanStore.updateBoard(input)),
   );
   ipcMain.handle("kanban:createColumn", async (_event, input: CreateKanbanColumnInput) =>
-    kanbanStore.createColumn(input),
+    runKanbanMutation(() => kanbanStore.createColumn(input)),
   );
   ipcMain.handle("kanban:updateColumn", async (_event, input: UpdateKanbanColumnInput) =>
-    kanbanStore.updateColumn(input),
+    runKanbanMutation(() => kanbanStore.updateColumn(input)),
   );
 });
 
